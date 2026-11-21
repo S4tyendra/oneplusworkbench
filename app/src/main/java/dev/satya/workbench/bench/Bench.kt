@@ -164,6 +164,11 @@ class Bench(private val act: WorkbenchActivity) {
 
     fun setBlur(px: Int) = act.setBlur(px)
 
+    /** Haptic feedback through the window (the OnePlus linear motor plays the system effects). */
+    fun buzz(kind: Int) {
+        act.window?.decorView?.performHapticFeedback(kind)
+    }
+
     /** Same layout as full screen: shrink the density by exactly the window's scale. */
     private fun densityFor(bounds: Rect): Int {
         val dpi = act.resources.displayMetrics.densityDpi
@@ -546,6 +551,7 @@ class Bench(private val act: WorkbenchActivity) {
     private suspend fun switchImpl(id: Int, from: Rect?) = coroutineScope {
         actionsFor = null
         handleMenu = false
+        if (id != mainTask) buzz(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
         if (id == mainTask) {
             if (covered) uncover(id)
             return@coroutineScope
@@ -596,6 +602,7 @@ class Bench(private val act: WorkbenchActivity) {
             switchImpl(existing.taskId, from)
             return
         }
+        buzz(android.view.HapticFeedbackConstants.CONFIRM)
         val launchEntry = Apps.all.value.firstOrNull { it.component == cn }
             ?: Apps.all.value.firstOrNull { it.pkg == cn.packageName }
         val target = launchEntry?.component ?: cn
@@ -644,6 +651,7 @@ class Bench(private val act: WorkbenchActivity) {
     fun minimize() = op {
         val old = mainTask ?: return@op
         handleMenu = false
+        buzz(android.view.HapticFeedbackConstants.GESTURE_END)
         cover()
         val dest = cardRectFor(keyOfTask(old))
         landing += old
@@ -662,6 +670,7 @@ class Bench(private val act: WorkbenchActivity) {
     fun closeMain() = op {
         val id = mainTask ?: return@op
         handleMenu = false
+        buzz(android.view.HapticFeedbackConstants.REJECT)
         cover()
         val f = Flyer(mainImage, icon(mainPkg), Rect(geo.main), shrink(geo.main, 0.86f), mainRadius, cardRadius, alphaTo = 0f)
         mainTask = null
@@ -684,6 +693,7 @@ class Bench(private val act: WorkbenchActivity) {
             if (e.pinned) Prefs.togglePin(e.component.flattenToString())
             return
         }
+        buzz(android.view.HapticFeedbackConstants.REJECT)
         hidden += t.taskId
         scope.launch {
             withContext(Dispatchers.IO) { Sys.remove(t.taskId) }
@@ -700,12 +710,14 @@ class Bench(private val act: WorkbenchActivity) {
 
     fun togglePin(e: StripEntry) {
         val existing = Prefs.pinned.value.firstOrNull { ComponentName.unflattenFromString(it)?.packageName == e.pkg }
+        buzz(if (existing == null) android.view.HapticFeedbackConstants.TOGGLE_ON else android.view.HapticFeedbackConstants.TOGGLE_OFF)
         Prefs.togglePin(existing ?: pinKeyFor(e.pkg, e.component))
     }
 
     fun togglePinMain() {
         val pkg = mainPkg ?: return
         val existing = Prefs.pinned.value.firstOrNull { ComponentName.unflattenFromString(it)?.packageName == pkg }
+        buzz(if (existing == null) android.view.HapticFeedbackConstants.TOGGLE_ON else android.view.HapticFeedbackConstants.TOGGLE_OFF)
         Prefs.togglePin(existing ?: pinKeyFor(pkg, null))
         handleMenu = false
     }
@@ -717,6 +729,7 @@ class Bench(private val act: WorkbenchActivity) {
         val target = taskId ?: mainTask ?: return@op
         handleMenu = false
         actionsFor = null
+        buzz(android.view.HapticFeedbackConstants.CONFIRM)
         cover()
         val isMain = target == mainTask
         val from = if (isMain) Rect(geo.main) else (fromKey?.let { cardRects[it] } ?: geo.slot(0))
@@ -807,6 +820,7 @@ class Bench(private val act: WorkbenchActivity) {
 
     fun beginRelocate(p: Offset) {
         if (busy || exiting) return
+        buzz(android.view.HapticFeedbackConstants.DRAG_START)
         relocPointer = p
         val d = CompletableDeferred<Edge?>()
         relocResult = d
@@ -828,7 +842,9 @@ class Bench(private val act: WorkbenchActivity) {
             relocPointer = null
             return
         }
-        d.complete(if (cancel || p == null) null else nearestEdge(p))
+        val e = if (cancel || p == null) null else nearestEdge(p)
+        buzz(if (e != null && e != edge) android.view.HapticFeedbackConstants.CONFIRM else android.view.HapticFeedbackConstants.GESTURE_END)
+        d.complete(e)
     }
 
     fun nearestEdge(p: Offset): Edge =
@@ -884,6 +900,7 @@ class Bench(private val act: WorkbenchActivity) {
     // ------------------------------------------------------------------ panels
 
     fun openModal(m: Modal) = op {
+        buzz(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
         actionsFor = null
         handleMenu = false
         cover()
@@ -922,6 +939,7 @@ class Bench(private val act: WorkbenchActivity) {
         if (modal != null) closeModalNow(restore = false)
         val comps = g.apps.mapNotNull { ComponentName.unflattenFromString(it) }
         if (comps.isEmpty()) return@op
+        buzz(android.view.HapticFeedbackConstants.CONFIRM)
         cover()
         suppressAdoptUntil = SystemClock.uptimeMillis() + 3000
         val bounds = Rect(geo.main)

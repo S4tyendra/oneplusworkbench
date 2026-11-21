@@ -567,6 +567,8 @@ private fun Grip(b: Bench, modifier: Modifier) {
 private fun RelocateTargets(b: Bench) {
     val p = b.relocPointer ?: return
     val target = b.nearestEdge(p)
+    var lastTarget by remember { mutableStateOf(target) }
+    if (target != lastTarget) { lastTarget = target; b.buzz(android.view.HapticFeedbackConstants.SEGMENT_TICK) }
     val rects = remember(b.geo) { Geo.EDGES.associateWith { b.geoFor(it).strip } }
     Canvas(Modifier.fillMaxSize()) {
         drawRect(Color(0x66000000))
