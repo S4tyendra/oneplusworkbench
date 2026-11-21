@@ -77,7 +77,7 @@ data class StripEntry(
     val pkg: String get() = component.packageName
 }
 
-enum class Modal { SEARCH, GROUPS, NEW_GROUP }
+enum class Modal { SEARCH, GROUPS, NEW_GROUP, NOTIFS }
 
 /**
  * Workbench controller.
@@ -680,6 +680,47 @@ class Bench(private val act: WorkbenchActivity) {
         }
         frames(3)
         flyers.removeAll(fl)
+        scheduleReload()
+    }
+
+    /** A notification opens in the main window: its app takes the main spot, then the notification's own intent runs there. */
+    fun openNotif(n: dev.satya.workbench.data.Notif, from: Rect?) = op {
+        val pi = n.intent
+        val existing = tasks.firstOrNull { it.pkg == n.pkg }
+        if (pi == null || existing != null) {
+            // App already on the bench (or nothing to send): bring it into the main window first.
+            openImpl(existing?.component ?: Apps.all.value.firstOrNull { it.pkg == n.pkg }?.component ?: return@op, null, from)
+            if (pi == null) return@op
+            delay(250)
+        } else {
+            if (modal != null) closeModalNow(restore = false)
+            buzz(android.view.HapticFeedbackConstants.CONFIRM)
+            val old = mainTask
+            val oldPkg = mainPkg
+            cover()
+            val fl = ArrayList<Flyer>()
+            if (old != null) {
+                landing += old
+                fl += Flyer(mainImage, icon(oldPkg), Rect(geo.main), cardRectFor(keyOfTask(old)), mainRadius, cardRadius)
+            }
+            fl += Flyer(null, icon(n.pkg), from ?: shrink(geo.main, 0.3f), Rect(geo.main), cardRadius, mainRadius)
+            mainTask = null
+            mainPkg = n.pkg
+            mainImage = null
+            pendingPkg = n.pkg
+            pendingSince = SystemClock.uptimeMillis()
+            flyers.addAll(fl)
+            animate(*fl.toTypedArray())
+            if (old != null) landing.remove(old)
+            frames(3)
+            flyers.removeAll(fl)
+        }
+        val opts = Sys.freeformOptions(act, Rect(geo.main), noAnim = true)
+        runCatching { opts.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED) }
+        val ok = runCatching { pi.send(act, 0, null, null, null, null, opts.toBundle()) }
+            .onFailure { Log.w(TAG, "notification intent", it) }.isSuccess
+        if (!ok && existing == null) { pendingPkg = null; mainPkg = null }
+        if (ok && n.autoCancel) dev.satya.workbench.data.Notifs.dismiss?.invoke(n.key)
         scheduleReload()
     }
 

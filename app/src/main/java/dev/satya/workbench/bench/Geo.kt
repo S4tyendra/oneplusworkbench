@@ -64,7 +64,7 @@ class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d:
             val t = availTop + ((b - availTop) - mh) / 2
             main = Rect(right - mw, t, right, t + mh)
             strip = Rect(insets.left, availTop, cardLeft + cardW + dp(10), bottom)
-            header = Rect(insets.left + dp(12), top, insets.left + dp(12) + dp(112), availTop)
+            header = Rect(insets.left + dp(12), top, insets.left + dp(12) + dp(170), availTop)
             handle = Rect(main.left, main.top - rowH, main.right, main.top)
             thick = strip.width()
             itemMain = cardH

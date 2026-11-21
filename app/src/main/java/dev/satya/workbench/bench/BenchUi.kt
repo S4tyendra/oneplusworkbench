@@ -1,5 +1,7 @@
 package dev.satya.workbench.bench
 
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.ui.draw.blur
 import androidx.compose.animation.core.CubicBezierEasing
@@ -369,7 +371,14 @@ private fun Strip(b: Bench) {
                 ) {
                     items(entries, key = { it.key }) { StripItem(b, it, Modifier.padding(top = pxDp(g.crossPad)).animateItem()) }
                 }
-                Grip(b, Modifier.fillMaxHeight().width(pxDp(g.gripLen)))
+                Column(
+                    Modifier.fillMaxHeight().width(pxDp(g.gripLen)),
+                    verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(Modifier.requiredSize(46.dp), contentAlignment = Alignment.Center) { BellBtn(b, 42.dp) }
+                    Grip(b, Modifier.requiredSize(46.dp))
+                }
             }
         }
     }
@@ -391,6 +400,33 @@ private fun TopButtons(b: Bench) {
     ) {
         RoundBtn(Icons.Rounded.Search) { b.openModal(Modal.SEARCH) }
         RoundBtn(Icons.Rounded.Layers) { b.openModal(Modal.GROUPS) }
+        BellBtn(b)
+    }
+}
+
+/** Notifications button with the total unread count on it. */
+@Composable
+private fun BellBtn(b: Bench, size: androidx.compose.ui.unit.Dp = 46.dp) {
+    val counts by dev.satya.workbench.data.Notifs.counts.collectAsState()
+    val total = counts.values.sum()
+    Box {
+        dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.Notifications, "Notifications", size) { b.openModal(Modal.NOTIFS) }
+        TotalBadge(total, Modifier.align(Alignment.TopEnd))
+    }
+}
+
+@Composable
+private fun TotalBadge(n: Int, modifier: Modifier) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = n > 0, modifier = modifier,
+        enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = 600f)) + fadeIn(),
+        exit = androidx.compose.animation.scaleOut(tween(150)) + fadeOut(tween(150))
+    ) {
+        Box(
+            Modifier.defaultMinSize(minWidth = 18.dp, minHeight = 18.dp).clip(CircleShape).background(Color(0xFFE5484D))
+                .border(1.5.dp, Color(0xFF0B0C10), CircleShape).padding(horizontal = 5.dp),
+            contentAlignment = Alignment.Center
+        ) { Text(if (n > 99) "99+" else n.toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, lineHeight = 10.sp) }
     }
 }
 
@@ -729,6 +765,7 @@ private fun Panels(b: Bench) {
                 Modal.SEARCH -> SearchPanel(b)
                 Modal.GROUPS -> GroupsPanel(b)
                 Modal.NEW_GROUP -> NewGroupPanel(b)
+                Modal.NOTIFS -> NotifPanel(b)
                 null -> {}
             }
         }
