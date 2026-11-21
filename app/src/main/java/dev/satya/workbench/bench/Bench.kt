@@ -569,6 +569,9 @@ class Bench(private val act: WorkbenchActivity) {
         if (behindPkgs.remove(pkg)) {
             session += taskId
             persistSession()
+            // The system cascades a launch that would sit on another window's bounds: snap it back to the main bounds.
+            val b = Rect(geo.main)
+            scope.launch(Dispatchers.IO) { Sys.prepareFreeform(taskId, b, dpiOf(taskId, b)) }
         }
         scheduleReload()
     }
@@ -675,11 +678,9 @@ class Bench(private val act: WorkbenchActivity) {
             covered = false
             session += id
             persistSession()
-            val dpi = densityFor(geo.main)
-            if (Sys.windowingMode(info) != Sys.WM_FREEFORM || dpi != 0) {
-                val b = Rect(geo.main)
-                scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, b, dpiOf(id, b)) }
-            }
+            // Always pin the bounds: freeform launches that land on another window's exact bounds get cascaded.
+            val b = Rect(geo.main)
+            scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, b, dpiOf(id, b)) }
             scheduleReload()
             return
         }
@@ -1330,10 +1331,13 @@ class Bench(private val act: WorkbenchActivity) {
                     )
                 }
             }
-            delay(700)
-            // Launch-behind lands in front when nothing covers it: bring the bench (and its main app) back on top.
+            val until = SystemClock.uptimeMillis() + 1500
+            while (app.pkg in behindPkgs && SystemClock.uptimeMillis() < until) delay(50)
+            delay(150)
+            // Launch-behind lands in front when nothing covers it: bench back on top, then its shown app(s) above it.
+            withContext(Dispatchers.IO) { Sys.showTask(act, act.taskId, null) }
             val m = mainTask
-            if (m != null) uncover(m) else cover()
+            if (m != null && !covered) uncover(m)
         }
         scheduleReload(0)
     }
@@ -1565,6 +1569,11 @@ class Bench(private val act: WorkbenchActivity) {
             }
         }
         persistSession()
+        // Wait for the background launches to exist, then put the bench back over them: only the first app shows.
+        val until = SystemClock.uptimeMillis() + 1500
+        while (behindPkgs.isNotEmpty() && SystemClock.uptimeMillis() < until) delay(50)
+        delay(150)
+        withContext(Dispatchers.IO) { Sys.showTask(act, act.taskId, null) }
         openImpl(comps[0], null, null)
         delay(600)
         scheduleReload(0)
