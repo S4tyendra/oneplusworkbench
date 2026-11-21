@@ -72,6 +72,14 @@
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/edge_service" />
         </service>
 
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="dev.satya.workbench.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/shelf_paths" />
+        </provider>
+
         <service
             android:name=".service.NotifListener"
             android:exported="true"

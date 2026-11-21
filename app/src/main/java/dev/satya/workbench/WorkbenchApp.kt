@@ -15,6 +15,7 @@ class WorkbenchApp : Application() {
             .onFailure { Log.w(Sys.TAG, "hidden api exemption failed", it) }
         Prefs.init(this)
         dev.satya.workbench.data.Usage.init(this)
+        dev.satya.workbench.data.Shelf.init(this)
         // A previous process died while Workbench was open: put its floating tasks back to fullscreen.
         val stale = Prefs.session
         if (stale.isNotEmpty()) {

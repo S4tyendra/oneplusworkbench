@@ -166,6 +166,9 @@ fun BenchUi(b: Bench) {
         )
         MainArea(b)
         if (b.mainTask != null) MainHandle(b)
+        Box(Modifier.at(b.geo.handle).graphicsLayer { alpha = b.reveal.value }) {
+            ShelfToggle(b, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
+        }
         Strip(b)
         if (b.edge.vertical) TopButtons(b)
         if (b.relocPointer != null) RelocateTargets(b)
@@ -341,6 +344,23 @@ private fun HandleBtn(icon: ImageVector, modifier: Modifier = Modifier, onClick:
     ) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(15.dp)) }
 }
 
+/** Cards and Shelf trade places: the outgoing set drops away, the incoming one rises in on a spring. */
+@Composable
+private fun ShelfSwap(b: Bench, modifier: Modifier, content: @Composable (Boolean) -> Unit) {
+    AnimatedContent(
+        b.shelfOpen,
+        modifier = modifier,
+        transitionSpec = {
+            val dir = if (targetState) 1 else -1
+            (fadeIn(tween(160)) + androidx.compose.animation.slideInVertically(spring(dampingRatio = 0.8f, stiffness = 420f)) { dir * it / 3 } +
+                scaleIn(spring(dampingRatio = 0.8f, stiffness = 420f), initialScale = 0.92f)) togetherWith
+                (fadeOut(tween(120)) + androidx.compose.animation.slideOutVertically(tween(180)) { -dir * it / 4 } +
+                    androidx.compose.animation.scaleOut(tween(180), targetScale = 0.94f))
+        },
+        label = "shelf"
+    ) { content(it) }
+}
+
 @Composable
 private fun Strip(b: Bench) {
     val g = b.geo
@@ -360,28 +380,35 @@ private fun Strip(b: Bench) {
     ) {
         if (e.vertical) {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                LazyColumn(
-                    state = b.listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth().fadeEdges(b, true),
-                    contentPadding = PaddingValues(vertical = pxDp(g.listPad)),
-                    verticalArrangement = Arrangement.spacedBy(pxDp(g.gap)),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    items(entries, key = { it.key }) { StripItem(b, it, Modifier.animateItem()) }
+                ShelfSwap(b, Modifier.weight(1f).fillMaxWidth()) { shelf ->
+                    if (shelf) Box(Modifier.width(pxDp(g.stripVisible)).fillMaxHeight().align(Alignment.Start)) {
+                        ShelfList(b, true, pxDp(g.stripVisible) - 12.dp, pxDp(g.stripVisible))
+                    } else LazyColumn(
+                        state = b.listState,
+                        modifier = Modifier.fillMaxSize().fadeEdges(b, true),
+                        contentPadding = PaddingValues(vertical = pxDp(g.listPad)),
+                        verticalArrangement = Arrangement.spacedBy(pxDp(g.gap)),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        items(entries, key = { it.key }) { StripItem(b, it, Modifier.animateItem()) }
+                    }
                 }
                 Grip(b, Modifier.align(Alignment.Start).width(pxDp(g.stripVisible)).height(pxDp(g.gripLen)))
             }
         } else {
             Row(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxHeight().width(pxDp(g.headerLen)), contentAlignment = Alignment.Center) { StripHeader(b) }
-                LazyRow(
-                    state = b.listState,
-                    modifier = Modifier.weight(1f).fillMaxHeight().fadeEdges(b, false),
-                    contentPadding = PaddingValues(horizontal = pxDp(g.listPad)),
-                    horizontalArrangement = Arrangement.spacedBy(pxDp(g.gap)),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    items(entries, key = { it.key }) { StripItem(b, it, Modifier.padding(top = pxDp(g.crossPad)).animateItem()) }
+                ShelfSwap(b, Modifier.weight(1f).fillMaxHeight()) { shelf ->
+                    if (shelf) ShelfList(b, false, pxDp(g.cardH) * 0.78f, pxDp(g.cardH))
+                    else LazyRow(
+                        state = b.listState,
+                        modifier = Modifier.fillMaxSize().fadeEdges(b, false),
+                        contentPadding = PaddingValues(horizontal = pxDp(g.listPad)),
+                        horizontalArrangement = Arrangement.spacedBy(pxDp(g.gap)),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        items(entries, key = { it.key }) { StripItem(b, it, Modifier.padding(top = pxDp(g.crossPad)).animateItem()) }
+                    }
                 }
                 Column(
                     Modifier.fillMaxHeight().width(pxDp(g.gripLen)),
@@ -393,6 +420,7 @@ private fun Strip(b: Bench) {
                 }
             }
         }
+        DropZones(b, e.vertical, if (e.vertical) Modifier.width(pxDp(g.stripVisible)).fillMaxHeight() else Modifier.fillMaxSize())
     }
 }
 

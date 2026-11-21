@@ -118,6 +118,11 @@ class Bench(private val act: WorkbenchActivity) {
     var actionsFor by mutableStateOf<String?>(null)
     var handleMenu by mutableStateOf(false)
     var relocPointer by mutableStateOf<Offset?>(null)
+    /** The strip shows the Shelf instead of cards. */
+    var shelfOpen by mutableStateOf(false)
+    /** Something is being dragged somewhere on screen (from any app): the strip turns into drop targets. */
+    var dropActive by mutableStateOf(false)
+    var shelfActionsFor by mutableStateOf<String?>(null)
     val listState = LazyListState()
     val cardRects = HashMap<String, Rect>()
 
@@ -896,6 +901,74 @@ class Bench(private val act: WorkbenchActivity) {
             )
         }
         finishQuietly()
+    }
+
+    // ------------------------------------------------------------------ shelf
+
+    fun toggleShelf() {
+        shelfOpen = !shelfOpen
+        shelfActionsFor = null
+        buzz(if (shelfOpen) android.view.HapticFeedbackConstants.TOGGLE_ON else android.view.HapticFeedbackConstants.TOGGLE_OFF)
+    }
+
+    /** A drop from another app: copy what it carries into the Shelf (or straight on to FileDock). */
+    fun acceptDrop(ev: android.view.DragEvent, toFileDock: Boolean): Boolean {
+        val clip = ev.clipData ?: return false
+        val perms = runCatching { act.requestDragAndDropPermissions(ev) }.getOrNull()
+        val desc = ev.clipDescription
+        buzz(android.view.HapticFeedbackConstants.CONFIRM)
+        shelfOpen = true
+        scope.launch {
+            val before = dev.satya.workbench.data.Shelf.items.value.map { it.id }.toSet()
+            withContext(Dispatchers.IO) {
+                for (i in 0 until clip.itemCount) {
+                    val it = clip.getItemAt(i)
+                    val mime = if (desc != null && desc.mimeTypeCount > 0) desc.getMimeType(minOf(i, desc.mimeTypeCount - 1)) else null
+                    when {
+                        it.uri != null -> dev.satya.workbench.data.Shelf.addUri(act, it.uri, mime)
+                        it.text != null -> dev.satya.workbench.data.Shelf.addText(it.text.toString())
+                        it.htmlText != null -> dev.satya.workbench.data.Shelf.addText(it.coerceToText(act).toString())
+                        it.intent != null -> dev.satya.workbench.data.Shelf.addText(it.intent.toUri(0))
+                    }
+                }
+            }
+            perms?.release()
+            if (toFileDock) {
+                val fresh = dev.satya.workbench.data.Shelf.items.value.filter { it.id !in before }
+                sendToFileDock(fresh)
+            }
+        }
+        return true
+    }
+
+    fun sendToFileDock(list: List<dev.satya.workbench.data.ShelfItem>) {
+        shelfActionsFor = null
+        if (list.isEmpty()) return
+        val ok = dev.satya.workbench.data.Shelf.toFileDock(act, list)
+        buzz(if (ok) android.view.HapticFeedbackConstants.CONFIRM else android.view.HapticFeedbackConstants.REJECT)
+        android.widget.Toast.makeText(act, if (ok) "Sent to FileDock" else "FileDock isn't available", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /** Clipboard into the Shelf. Reading the clipboard needs window focus, so take it for a moment. */
+    fun pasteClipboard() = scope.launch {
+        act.setFocusable(true)
+        delay(120)
+        val cm = act.getSystemService(android.content.ClipboardManager::class.java)
+        val c = runCatching { cm.primaryClip }.getOrNull()
+        act.setFocusable(modal != null)
+        if (c == null || c.itemCount == 0) {
+            buzz(android.view.HapticFeedbackConstants.REJECT)
+            android.widget.Toast.makeText(act, "Clipboard is empty", android.widget.Toast.LENGTH_SHORT).show()
+            return@launch
+        }
+        buzz(android.view.HapticFeedbackConstants.CONFIRM)
+        withContext(Dispatchers.IO) {
+            for (i in 0 until c.itemCount) {
+                val it = c.getItemAt(i)
+                if (it.uri != null) dev.satya.workbench.data.Shelf.addUri(act, it.uri, c.description.getMimeType(0))
+                else dev.satya.workbench.data.Shelf.addText(it.coerceToText(act).toString())
+            }
+        }
     }
 
     // ------------------------------------------------------------------ strip position
