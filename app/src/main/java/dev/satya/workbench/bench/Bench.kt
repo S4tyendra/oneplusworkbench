@@ -710,6 +710,10 @@ class Bench(private val act: WorkbenchActivity) {
     // ------------------------------------------------------------------ user actions
 
     fun onBackdropTap() {
+        if (modal == Modal.NOTIFS) {
+            closeModal()
+            return
+        }
         if (actionsFor != null || handleMenu) {
             actionsFor = null
             handleMenu = false
@@ -742,6 +746,8 @@ class Bench(private val act: WorkbenchActivity) {
     }
 
     private suspend fun switchImpl(id: Int, from: Rect?, slide: Int = 0) = coroutineScope {
+        // Notifications sit in the main window with the strip live beside them: picking an app closes them.
+        if (modal != null) closeModalNow(restore = false)
         actionsFor = null
         handleMenu = false
         if (id != mainTask) buzz(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
@@ -1391,28 +1397,6 @@ class Bench(private val act: WorkbenchActivity) {
         val ok = dev.satya.workbench.data.Shelf.toFileDock(act, list)
         buzz(if (ok) android.view.HapticFeedbackConstants.CONFIRM else android.view.HapticFeedbackConstants.REJECT)
         android.widget.Toast.makeText(act, if (ok) "Sent to FileDock" else "FileDock isn't available", android.widget.Toast.LENGTH_SHORT).show()
-    }
-
-    /** Clipboard into the Shelf. Reading the clipboard needs window focus, so take it for a moment. */
-    fun pasteClipboard() = scope.launch {
-        act.setFocusable(true)
-        delay(120)
-        val cm = act.getSystemService(android.content.ClipboardManager::class.java)
-        val c = runCatching { cm.primaryClip }.getOrNull()
-        act.setFocusable(modal != null)
-        if (c == null || c.itemCount == 0) {
-            buzz(android.view.HapticFeedbackConstants.REJECT)
-            android.widget.Toast.makeText(act, "Clipboard is empty", android.widget.Toast.LENGTH_SHORT).show()
-            return@launch
-        }
-        buzz(android.view.HapticFeedbackConstants.CONFIRM)
-        withContext(Dispatchers.IO) {
-            for (i in 0 until c.itemCount) {
-                val it = c.getItemAt(i)
-                if (it.uri != null) dev.satya.workbench.data.Shelf.addUri(act, it.uri, c.description.getMimeType(0))
-                else dev.satya.workbench.data.Shelf.addText(it.coerceToText(act).toString())
-            }
-        }
     }
 
     // ------------------------------------------------------------------ strip position

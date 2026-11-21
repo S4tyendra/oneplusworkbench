@@ -9,6 +9,12 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Inbox
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.ui.draw.blur
 import androidx.compose.animation.core.CubicBezierEasing
@@ -152,13 +158,13 @@ fun BenchUi(b: Bench) {
         val maxBlur = with(d) { 36.dp.toPx() }
         snapshotFlow {
             // Search / groups panels always get the full blur behind them, whatever the transparency setting.
-            val k = if (b.modal != null) 1f else ((1f - Prefs.transparency.value) * 2f).coerceAtMost(1f)
+            val k = if (b.modal != null && b.modal != Modal.NOTIFS) 1f else ((1f - Prefs.transparency.value) * 2f).coerceAtMost(1f)
             (b.reveal.value * maxBlur * k / 6f).roundToInt() * 6
         }
             .collect { b.setBlur(it) }
     }
     // Blur the whole bench (strip, main window, buttons) under the search / groups panels.
-    val panelBlur by androidx.compose.animation.core.animateDpAsState(if (b.modal != null && b.appDrag == null) 28.dp else 0.dp, tween(220), label = "panelBlur")
+    val panelBlur by androidx.compose.animation.core.animateDpAsState(if (b.modal != null && b.modal != Modal.NOTIFS && b.appDrag == null) 28.dp else 0.dp, tween(220), label = "panelBlur")
     Box(Modifier.fillMaxSize()) {
       Box(Modifier.fillMaxSize().then(if (panelBlur > 0.dp) Modifier.blur(panelBlur) else Modifier)) {
         // Dim + tap-to-exit backdrop
@@ -170,12 +176,9 @@ fun BenchUi(b: Bench) {
                 .cleanTap { b.onBackdropTap() }
         )
         MainArea(b)
+        NotifArea(b)
         if (b.mainTask != null) MainHandle(b)
-        Box(Modifier.at(b.geo.handle).graphicsLayer { alpha = b.reveal.value }) {
-            ShelfToggle(b, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
-        }
         Strip(b)
-        if (b.edge.vertical) TopButtons(b)
         if (b.relocPointer != null) RelocateTargets(b)
         FlyerLayer(b)
       }
@@ -518,12 +521,15 @@ private fun Strip(b: Bench) {
                 alpha = b.reveal.value
             }
     ) {
+        val tools = pxDp(g.toolsLen)
         if (e.vertical) {
-            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            // Everything but the cards keeps to the part of the strip the main window doesn't cover.
+            val vis = pxDp(g.stripVisible)
+            Column(Modifier.fillMaxSize()) {
                 ShelfSwap(b, Modifier.weight(1f).fillMaxWidth()) { shelf ->
-                    if (shelf) Box(Modifier.width(pxDp(g.stripVisible)).fillMaxHeight().align(Alignment.Start)) {
-                        ShelfList(b, true, pxDp(g.stripVisible) - 12.dp, pxDp(g.stripVisible))
-                    } else LazyColumn(
+                    // AnimatedContent hands its full width down as a minimum: nest, so the shelf keeps to the visible part.
+                    if (shelf) Box(Modifier.fillMaxSize()) { Box(Modifier.width(vis).fillMaxHeight()) { ShelfList(b, true, vis - 16.dp, vis - 16.dp) } }
+                    else LazyColumn(
                         state = b.listState,
                         modifier = Modifier.fillMaxSize().fadeEdges(b, true),
                         contentPadding = PaddingValues(vertical = pxDp(g.listPad)),
@@ -533,13 +539,12 @@ private fun Strip(b: Bench) {
                         items(entries, key = { it.key }) { StripItem(b, it, Modifier.animateItem()) }
                     }
                 }
-                Grip(b, Modifier.align(Alignment.Start).width(pxDp(g.stripVisible)).height(pxDp(g.gripLen)))
+                StripTools(b, true, Modifier.width(vis).height(tools))
             }
         } else {
             Row(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxHeight().width(pxDp(g.headerLen)), contentAlignment = Alignment.Center) { StripHeader(b) }
                 ShelfSwap(b, Modifier.weight(1f).fillMaxHeight()) { shelf ->
-                    if (shelf) ShelfList(b, false, pxDp(g.cardH) * 0.78f, pxDp(g.cardH))
+                    if (shelf) ShelfList(b, false, pxDp(g.cardH) * 0.66f, pxDp(g.cardH))
                     else LazyRow(
                         state = b.listState,
                         modifier = Modifier.fillMaxSize().fadeEdges(b, false),
@@ -550,72 +555,183 @@ private fun Strip(b: Bench) {
                         items(entries, key = { it.key }) { StripItem(b, it, Modifier.padding(top = pxDp(g.crossPad)).animateItem()) }
                     }
                 }
-                Column(
-                    Modifier.fillMaxHeight().width(pxDp(g.gripLen)),
-                    verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Box(Modifier.requiredSize(46.dp), contentAlignment = Alignment.Center) { BellBtn(b, 42.dp) }
-                    Grip(b, Modifier.requiredSize(46.dp))
-                }
+                StripTools(b, false, Modifier.fillMaxHeight().width(tools))
             }
         }
         DropZones(b, e.vertical, if (e.vertical) Modifier.width(pxDp(g.stripVisible)).fillMaxHeight() else Modifier.fillMaxSize())
     }
 }
 
-/** Side layout: search and groups side by side at the very top, above the main window. */
+private val NotiPurple = Color(0xFF8B7CF6)
+private val ShelfGreen = Color(0xFF9BD39B)
+private val Ink = Color(0xFF0B0C10)
+
+/**
+ * The end of the strip, the same on every edge: a divider, the notifications tile, the shelf tile, and two circles.
+ * Normally the circles are settings (drag it to move the strip) and search (hold it for groups); with the shelf
+ * open they become "all to FileDock" and "back to the apps". Its length is [Geo.toolsLen].
+ */
 @Composable
-private fun TopButtons(b: Bench) {
-    val g = b.geo
-    Row(
-        Modifier
-            .at(g.header)
-            .graphicsLayer {
-                alpha = b.reveal.value
-                translationY = -g.header.height() * (1f - b.reveal.value) * 0.5f
-            },
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RoundBtn(Icons.Rounded.Search) { b.openModal(Modal.SEARCH) }
-        RoundBtn(Icons.Rounded.Layers) { b.openModal(Modal.GROUPS) }
-        BellBtn(b)
+private fun StripTools(b: Bench, vertical: Boolean, modifier: Modifier) {
+    val tile = 60.dp
+    if (vertical) Column(modifier.padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.padding(vertical = 6.dp).fillMaxWidth(0.55f).height(1.dp).background(Color.White.copy(alpha = 0.16f)))
+        Spacer(Modifier.height(1.dp))
+        NotiTile(b, Modifier.fillMaxWidth().height(tile))
+        Spacer(Modifier.height(8.dp))
+        ArchiveTile(b, Modifier.fillMaxWidth().height(tile))
+        Spacer(Modifier.height(12.dp))
+        ToolCircles(b)
+    } else Row(modifier.padding(vertical = pxDp(b.geo.crossPad)), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.padding(horizontal = 6.dp).width(1.dp).fillMaxHeight(0.55f).background(Color.White.copy(alpha = 0.16f)))
+        Spacer(Modifier.width(1.dp))
+        NotiTile(b, Modifier.width(tile).fillMaxHeight())
+        Spacer(Modifier.width(8.dp))
+        ArchiveTile(b, Modifier.width(tile).fillMaxHeight())
+        Spacer(Modifier.width(8.dp))
+        ToolCircles(b)
     }
 }
 
-/** Notifications button with the total unread count on it. */
+/** Notifications: opens the list inside the main window; purple while it's open. */
 @Composable
-private fun BellBtn(b: Bench, size: androidx.compose.ui.unit.Dp = 46.dp) {
+private fun NotiTile(b: Bench, modifier: Modifier) {
     val counts by dev.satya.workbench.data.Notifs.counts.collectAsState()
     val badges by Prefs.badges.collectAsState()
-    val total = if (badges) counts.values.sum() else 0
-    Box {
-        dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.Notifications, "Notifications", size) { b.openModal(Modal.NOTIFS) }
-        TotalBadge(total, Modifier.align(Alignment.TopEnd))
+    val n = if (badges) counts.values.sum() else 0
+    val on = b.modal == Modal.NOTIFS
+    ToolTile(on, NotiPurple, Color.White, "Notifications", modifier, onClick = {
+        b.buzz(if (on) android.view.HapticFeedbackConstants.TOGGLE_OFF else android.view.HapticFeedbackConstants.TOGGLE_ON)
+        if (on) b.closeModal() else b.openModal(Modal.NOTIFS)
+    }) { fg ->
+        Icon(Icons.Rounded.Notifications, null, tint = fg, modifier = Modifier.size(22.dp))
+        CountPill(n, if (on) Color.White else NotiPurple, if (on) NotiPurple else Color.White)
+    }
+}
+
+/** The Shelf (copied and dropped things): swaps the cards for the shelf items; green while it's open. */
+@Composable
+private fun ArchiveTile(b: Bench, modifier: Modifier) {
+    val items by dev.satya.workbench.data.Shelf.items.collectAsState()
+    val on = b.shelfOpen
+    ToolTile(on, ShelfGreen, Ink, "Shelf", modifier, onClick = { b.toggleShelf() }) { fg ->
+        Icon(Icons.Rounded.Inbox, null, tint = fg, modifier = Modifier.size(22.dp))
+        CountPill(items.size, if (on) Ink else ShelfGreen, if (on) ShelfGreen else Ink)
     }
 }
 
 @Composable
-private fun TotalBadge(n: Int, modifier: Modifier) {
-    androidx.compose.animation.AnimatedVisibility(
-        visible = n > 0, modifier = modifier,
+private fun ToolTile(
+    on: Boolean, accent: Color, onAccent: Color, desc: String, modifier: Modifier, onClick: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.(Color) -> Unit,
+) {
+    val t by animateFloatAsState(if (on) 1f else 0f, spring(dampingRatio = 0.7f, stiffness = 500f), label = "tile")
+    val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by press.collectIsPressedAsState()
+    val s by animateFloatAsState(if (pressed) 0.93f else 1f, spring(dampingRatio = 0.5f, stiffness = 700f), label = "press")
+    val shape = RoundedCornerShape(18.dp)
+    val fg = androidx.compose.ui.graphics.lerp(Color.White, onAccent, t)
+    Column(
+        modifier
+            .graphicsLayer { scaleX = s; scaleY = s }
+            .clip(shape)
+            .background(androidx.compose.ui.graphics.lerp(Color(0x1FFFFFFF), accent, t))
+            .border(1.dp, Color.White.copy(alpha = 0.10f * (1f - t)), shape)
+            .clickable(interactionSource = press, indication = null, onClick = onClick)
+            .semantics { contentDescription = desc },
+        verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) { content(fg) }
+}
+
+/** A count under a tile's icon; pops in and out. */
+@Composable
+private fun androidx.compose.foundation.layout.ColumnScope.CountPill(n: Int, bg: Color, fg: Color) {
+    AnimatedVisibility(
+        visible = n > 0,
         enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = 600f)) + fadeIn(),
         exit = androidx.compose.animation.scaleOut(tween(150)) + fadeOut(tween(150))
     ) {
         Box(
-            Modifier.defaultMinSize(minWidth = 18.dp, minHeight = 18.dp).clip(CircleShape).background(Color(0xFFE5484D))
-                .border(1.5.dp, Color(0xFF0B0C10), CircleShape).padding(horizontal = 5.dp),
+            Modifier.defaultMinSize(minWidth = 24.dp, minHeight = 16.dp).clip(CircleShape).background(bg).padding(horizontal = 6.dp),
             contentAlignment = Alignment.Center
-        ) { Text(if (n > 99) "99+" else n.toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, lineHeight = 10.sp) }
+        ) { Text(if (n > 99) "99+" else n.toString(), color = fg, fontSize = 10.sp, fontWeight = FontWeight.Bold, lineHeight = 10.sp) }
     }
 }
 
 @Composable
-private fun StripHeader(b: Bench) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        RoundBtn(Icons.Rounded.Search) { b.openModal(Modal.SEARCH) }
-        RoundBtn(Icons.Rounded.Layers) { b.openModal(Modal.GROUPS) }
+private fun ToolCircles(b: Bench) {
+    AnimatedContent(
+        b.shelfOpen,
+        transitionSpec = {
+            (fadeIn(tween(140)) + scaleIn(spring(dampingRatio = 0.6f, stiffness = 500f), initialScale = 0.6f)) togetherWith
+                (fadeOut(tween(100)) + androidx.compose.animation.scaleOut(tween(120), targetScale = 0.6f))
+        },
+        label = "circles"
+    ) { shelf ->
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (shelf) {
+                val items by dev.satya.workbench.data.Shelf.items.collectAsState()
+                dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.ArrowUpward, "Send everything to FileDock", 44.dp) { b.sendToFileDock(items) }
+                Box(Modifier.size(44.dp).border(1.5.dp, ShelfGreen.copy(alpha = 0.8f), CircleShape), contentAlignment = Alignment.Center) {
+                    dev.satya.workbench.ui.CouiRoundButton(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, "Back to apps", 44.dp) { b.toggleShelf() }
+                }
+            } else {
+                Grip(b, Modifier.size(44.dp))
+                SearchCircle(b)
+            }
+        }
+    }
+}
+
+/** Search; hold it for groups. The hold is caught before the COUI button sees it, so it doesn't also click. */
+@Composable
+private fun SearchCircle(b: Bench) {
+    Box(
+        Modifier
+            .size(44.dp)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    val released = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                        while (true) {
+                            val c = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
+                            if (!c.pressed || (c.position - down.position).getDistance() > viewConfiguration.touchSlop) break
+                        }
+                        true
+                    }
+                    if (released != null) return@awaitEachGesture
+                    b.buzz(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    b.openModal(Modal.GROUPS)
+                    while (true) {
+                        val c = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
+                        c.consume()
+                        if (!c.pressed) break
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.Search, "Search (hold for groups)", 44.dp) { b.openModal(Modal.SEARCH) }
+    }
+}
+
+/** Notifications open inside the main window; the strip stays live beside them. */
+@Composable
+private fun NotifArea(b: Bench) {
+    val g = b.geo
+    val r = with(LocalDensity.current) { b.mainRadius.toDp() }
+    AnimatedVisibility(
+        visible = b.modal == Modal.NOTIFS,
+        modifier = Modifier.at(g.main),
+        enter = fadeIn(tween(160)) + scaleIn(spring(dampingRatio = 0.82f, stiffness = 420f), initialScale = 0.96f),
+        exit = fadeOut(tween(140)) + androidx.compose.animation.scaleOut(tween(160), targetScale = 0.97f)
+    ) {
+        Box(
+            Modifier.fillMaxSize().clip(RoundedCornerShape(r)).background(Color(0xFF15161B))
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(r))
+                .pointerInput(Unit) { detectTapGestures { } }
+        ) { NotifPanel(b) }
     }
 }
 
@@ -650,11 +766,6 @@ private fun NotifBadge(pkg: String, modifier: Modifier) {
             Text(if (n > 99) "99+" else n.toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, lineHeight = 10.sp)
         }
     }
-}
-
-@Composable
-private fun RoundBtn(icon: ImageVector, onClick: () -> Unit) {
-    dev.satya.workbench.ui.CouiRoundButton(icon, null, 46.dp, onClick = onClick)
 }
 
 @Composable
@@ -932,9 +1043,11 @@ private fun DrawScope.drawFlyer(f: Flyer, iconSize: Float) {
 @Composable
 private fun Panels(b: Bench) {
     var last by remember { mutableStateOf<Modal?>(null) }
-    if (b.modal != null) last = b.modal
+    // Notifications are not a full-screen panel: they open inside the main window (NotifArea).
+    val full = b.modal.takeIf { it != Modal.NOTIFS }
+    if (full != null) last = full
     AnimatedVisibility(
-        visible = b.modal != null,
+        visible = full != null,
         enter = fadeIn(tween(160)) +
             androidx.compose.animation.slideInVertically(spring(dampingRatio = 0.82f, stiffness = 420f)) { it / 16 } +
             scaleIn(spring(dampingRatio = 0.82f, stiffness = 420f), initialScale = 0.93f),
@@ -948,8 +1061,7 @@ private fun Panels(b: Bench) {
                 Modal.SEARCH -> SearchPanel(b)
                 Modal.GROUPS -> GroupsPanel(b)
                 Modal.NEW_GROUP -> NewGroupPanel(b)
-                Modal.NOTIFS -> NotifPanel(b)
-                null -> {}
+                Modal.NOTIFS, null -> {}
             }
         }
     }

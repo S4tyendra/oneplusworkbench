@@ -21,9 +21,11 @@ class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d:
     val labelH = 0
     val listPad = dp(6)
     val crossPad = dp(8)
-    /** Search / groups buttons at the start of the strip (top edge only; the side layout puts them in [header]). */
-    val headerLen = if (edge.vertical) 0 else dp(60)
-    val gripLen = dp(34)
+    /**
+     * The tools at the end of the strip (divider, notifications and shelf tiles, settings and search circles).
+     * Matches the Compose layout in StripTools.
+     */
+    val toolsLen = if (edge.vertical) dp(260) else dp(200)
 
     val full = Rect(0, 0, w, h)
     /** Main window size relative to the screen. */
@@ -31,8 +33,6 @@ class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d:
     val strip: Rect
     val main: Rect
     val handle: Rect
-    /** Side layout: the row above the main window holding the search and groups buttons. */
-    val header: Rect
     val cardW: Int
     val cardH: Int
     val thick: Int
@@ -63,8 +63,8 @@ class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d:
             scale = mh.toFloat() / h
             val t = availTop + ((b - availTop) - mh) / 2
             main = Rect(right - mw, t, right, t + mh)
-            strip = Rect(insets.left, availTop, cardLeft + cardW + dp(10), bottom)
-            header = Rect(insets.left + dp(12), top, insets.left + dp(12) + dp(170), availTop)
+            // The strip runs the full height on the left; the row above the main window only holds its handle.
+            strip = Rect(insets.left, top, cardLeft + cardW + dp(10), bottom)
             handle = Rect(main.left, main.top - rowH, main.right, main.top)
             thick = strip.width()
             itemMain = cardH
@@ -86,7 +86,6 @@ class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d:
             main = Rect(l, availTop, l + mw, b)
             thick = strip.height()
             itemMain = cardW
-            header = Rect()
             handle = Rect(main.left, main.top - handleH, main.right, main.top)
         }
     }
@@ -104,16 +103,16 @@ class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d:
     fun slot(i: Int): Rect {
         val r = if (edge.vertical) {
             val x = strip.left + (thick - cardW) / 2
-            val y = strip.top + headerLen + listPad + i * (itemMain + gap)
+            val y = strip.top + listPad + i * (itemMain + gap)
             Rect(x, y, x + cardW, y + cardH)
         } else {
-            val x = strip.left + headerLen + listPad + i * (itemMain + gap)
+            val x = strip.left + listPad + i * (itemMain + gap)
             val y = strip.top + crossPad
             Rect(x, y, x + cardW, y + cardH)
         }
         // Past the visible end of the strip: park it at the end.
-        if (edge.vertical && r.bottom > strip.bottom - gripLen) r.offsetTo(r.left, strip.bottom - gripLen - cardH)
-        if (!edge.vertical && r.right > strip.right - gripLen) r.offsetTo(strip.right - gripLen - cardW, r.top)
+        if (edge.vertical && r.bottom > strip.bottom - toolsLen) r.offsetTo(r.left, strip.bottom - toolsLen - cardH)
+        if (!edge.vertical && r.right > strip.right - toolsLen) r.offsetTo(strip.right - toolsLen - cardW, r.top)
         return r
     }
 

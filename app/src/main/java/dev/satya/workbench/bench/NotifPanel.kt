@@ -78,25 +78,17 @@ fun NotifPanel(b: Bench) {
     val items by Notifs.items.collectAsState()
     val connected by Notifs.connected.collectAsState()
     BackHandler { b.closeModal() }
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.popIn(0, rise = 28.dp, from = 0.94f).padding(top = 16.dp, bottom = 4.dp)) {
-            Text("Notifications", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.Close, "Close", 44.dp) { b.closeModal() }
-        }
-        Text(
-            if (connected) "Tap to open it here in the main window. Swipe sideways to dismiss." else "Waiting for notification access…",
-            color = NDim, fontSize = 13.sp, modifier = Modifier.popIn(1)
-        )
-        Spacer(Modifier.height(14.dp))
-        if (items.isNotEmpty()) {
-            dev.satya.workbench.ui.CouiButton("Clear all", Modifier.popIn(2), primary = false, icon = Icons.Rounded.ClearAll) {
+    // Lives inside the main window (NotifArea): title and Clear all on one line, then the cards.
+    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.popIn(0, rise = 20.dp, from = 0.96f).padding(top = 14.dp, bottom = 10.dp)) {
+            Text("Notifications", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            if (items.isNotEmpty()) dev.satya.workbench.ui.CouiButton("Clear all", primary = false, icon = Icons.Rounded.ClearAll) {
                 b.buzz(android.view.HapticFeedbackConstants.REJECT)
                 items.forEach { n -> Notifs.dismiss?.invoke(n.key) }
             }
-            Spacer(Modifier.height(14.dp))
-        } else {
-            Text("You're all caught up.", color = Color.White.copy(alpha = 0.45f), fontSize = 14.sp, modifier = Modifier.popIn(2).padding(vertical = 12.dp))
         }
+        if (!connected) Text("Waiting for notification access…", color = NDim, fontSize = 13.sp, modifier = Modifier.popIn(1).padding(bottom = 10.dp))
+        else if (items.isEmpty()) Text("You're all caught up.", color = Color.White.copy(alpha = 0.45f), fontSize = 14.sp, modifier = Modifier.popIn(1).padding(vertical = 12.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 24.dp), modifier = Modifier.weight(1f)) {
             itemsIndexed(items, key = { _, n -> n.key }) { i, n ->
                 Box(Modifier.animateItem().popIn(3 + i)) { NotifRow(b, n) }

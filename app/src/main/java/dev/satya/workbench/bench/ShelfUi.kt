@@ -33,7 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -77,45 +77,16 @@ import dev.satya.workbench.data.ShelfItem
 
 private val Accent = Color(0xFF9BD39B)
 
-/** Tray button at the start of the handle row: opens the Shelf in the strip's place. */
-@Composable
-fun ShelfToggle(b: Bench, modifier: Modifier) {
-    val items by Shelf.items.collectAsState()
-    val on = b.shelfOpen
-    val bg by animateFloatAsState(if (on) 1f else 0f, spring(stiffness = 500f), label = "tray")
-    Box(modifier) {
-        Box(
-            Modifier
-                .size(28.dp)
-                .graphicsLayer { val s = 1f + 0.08f * bg; scaleX = s; scaleY = s }
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.16f + 0.7f * bg))
-                .clickable { b.toggleShelf() },
-            contentAlignment = Alignment.Center
-        ) { Icon(Icons.Rounded.Inbox, "Shelf", tint = if (on) Color(0xFF0B0C10) else Color.White, modifier = Modifier.size(16.dp)) }
-        if (items.isNotEmpty() && !on) Box(
-            Modifier.align(Alignment.TopEnd).padding(start = 20.dp).defaultMinSize(minWidth = 14.dp, minHeight = 14.dp)
-                .clip(CircleShape).background(Accent).padding(horizontal = 3.dp),
-            contentAlignment = Alignment.Center
-        ) { Text(items.size.toString(), color = Color(0xFF0B0C10), fontSize = 9.sp, fontWeight = FontWeight.Bold, lineHeight = 9.sp) }
-    }
-}
-
-/** The Shelf laid out along the strip: a paste tile, the items, and "all to FileDock". */
-@OptIn(ExperimentalFoundationApi::class)
+/** The Shelf laid out along the strip: compact tiles, newest first (copied text and images land here on their own). */
 @Composable
 fun ShelfList(b: Bench, vertical: Boolean, tile: Dp, tileLong: Dp) {
     val items by Shelf.items.collectAsState()
-    val pad = PaddingValues(6.dp)
+    val pad = PaddingValues(8.dp)
     val content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
-        item(key = "paste") { ShelfAction(Icons.Rounded.ContentPaste, "Paste", tile, tileLong, Modifier.animateItem().popIn(0)) { b.pasteClipboard() } }
-        if (items.isNotEmpty()) item(key = "dock") {
-            ShelfAction(Icons.Rounded.Upload, "All to FileDock", tile, tileLong, Modifier.animateItem().popIn(1)) { b.sendToFileDock(items) }
-        }
-        items(items, key = { it.id }) { s -> ShelfTile(b, s, tile, tileLong, Modifier.animateItem().popIn(2)) }
+        itemsIndexed(items, key = { _, s -> s.id }) { i, s -> ShelfTile(b, s, tile, tileLong, Modifier.animateItem().popIn(minOf(i, 6))) }
         if (items.isEmpty()) item(key = "hint") {
-            Box(if (vertical) Modifier.width(tile).height(tileLong * 1.4f).padding(4.dp) else Modifier.fillParentMaxWidth(0.62f).height(tile).padding(6.dp), contentAlignment = Alignment.Center) {
-                Text("Drag text, photos or files here from any app", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, textAlign = TextAlign.Center)
+            Box(if (vertical) Modifier.width(tile).height(tileLong * 2.2f).padding(2.dp) else Modifier.fillParentMaxWidth(0.7f).height(tileLong).padding(6.dp), contentAlignment = Alignment.Center) {
+                Text("Copy something, or drag it here from any app", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, textAlign = TextAlign.Center, lineHeight = 14.sp)
             }
         }
     }
@@ -123,17 +94,11 @@ fun ShelfList(b: Bench, vertical: Boolean, tile: Dp, tileLong: Dp) {
     else LazyRow(Modifier.fillMaxSize(), contentPadding = pad, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = content)
 }
 
-@Composable
-private fun ShelfAction(icon: ImageVector, label: String, w: Dp, h: Dp, modifier: Modifier, onClick: () -> Unit) {
-    Column(
-        modifier.size(w, h).clip(RoundedCornerShape(14.dp)).border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
-            .background(Color(0x14FFFFFF)).clickable(onClick = onClick).padding(6.dp),
-        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.height(6.dp))
-        Text(label, color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp, textAlign = TextAlign.Center, lineHeight = 12.sp)
-    }
+/** What a tile says it is: where text came from, or the kind of file. */
+private fun ShelfItem.tag(): String = when {
+    kind == "text" -> if (src == "clip") "CLIPBOARD" else "TEXT"
+    isImage -> "IMG"
+    else -> name.substringAfterLast('.', "FILE").uppercase().take(5)
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -162,25 +127,32 @@ private fun ShelfTile(b: Bench, s: ShelfItem, w: Dp, h: Dp, modifier: Modifier) 
     ) {
         when {
             thumb != null -> Image(thumb, s.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            s.kind == "text" -> Text(s.text, color = Color.White.copy(alpha = 0.9f), fontSize = 11.sp, lineHeight = 14.sp, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
-            else -> Column(Modifier.fillMaxSize().padding(6.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.AutoMirrored.Rounded.InsertDriveFile, null, tint = Accent, modifier = Modifier.size(26.dp))
-                Spacer(Modifier.height(4.dp))
-                Text(s.name, color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, lineHeight = 12.sp)
+            s.kind == "text" -> Text(s.text.trim(), color = Color.White.copy(alpha = 0.9f), fontSize = 10.sp, lineHeight = 12.sp, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 7.dp, end = 7.dp, top = 7.dp, bottom = 20.dp))
+            else -> Column(Modifier.fillMaxSize().padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 18.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.AutoMirrored.Rounded.InsertDriveFile, null, tint = Accent, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.height(3.dp))
+                Text(s.name, color = Color.White.copy(alpha = 0.85f), fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, lineHeight = 11.sp)
             }
         }
+        // Kind label along the bottom, on a scrim so it reads over photos too.
+        Box(
+            Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000))))
+                .padding(start = 7.dp, bottom = 5.dp, top = 8.dp)
+        ) { Text(s.tag(), color = if (s.src == "clip" || s.isImage) Accent else Color.White.copy(alpha = 0.7f), fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp, lineHeight = 9.sp, maxLines = 1) }
         AnimatedVisibility(
             visible = b.shelfActionsFor == s.id,
             enter = fadeIn(tween(120)), exit = fadeOut(tween(110)) + scaleOut(tween(140), targetScale = 0.9f)
         ) {
-            Box(Modifier.fillMaxSize().background(Color(0xC8000000)), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxSize().background(Color(0xD8000000)), contentAlignment = Alignment.Center) {
                 val pop = { i: Int -> Modifier.popIn(i, step = 40, rise = 8.dp, from = 0.3f, damping = 0.52f, stiffness = 520f) }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         MiniBtn(Icons.Rounded.ContentCopy, pop(0)) { Shelf.copy(ctx, s); b.buzz(android.view.HapticFeedbackConstants.CONFIRM); b.shelfActionsFor = null }
                         MiniBtn(Icons.Rounded.MoveToInbox, pop(1)) { b.sendToFileDock(listOf(s)) }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         MiniBtn(Icons.Rounded.Share, pop(2)) { b.shelfActionsFor = null; Shelf.share(ctx, s) }
                         MiniBtn(Icons.Rounded.DeleteOutline, pop(3), Color(0xCCE5484D)) { b.buzz(android.view.HapticFeedbackConstants.REJECT); b.shelfActionsFor = null; Shelf.remove(s) }
                     }
@@ -192,8 +164,8 @@ private fun ShelfTile(b: Bench, s: ShelfItem, w: Dp, h: Dp, modifier: Modifier) 
 
 @Composable
 private fun MiniBtn(icon: ImageVector, modifier: Modifier, bg: Color = Color(0x40FFFFFF), onClick: () -> Unit) {
-    Box(modifier.size(30.dp).clip(CircleShape).background(bg).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = Color.White, modifier = Modifier.size(16.dp))
+    Box(modifier.size(26.dp).clip(CircleShape).background(bg).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(14.dp))
     }
 }
 
