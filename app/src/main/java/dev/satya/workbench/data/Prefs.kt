@@ -41,6 +41,14 @@ object Prefs {
         groups.value = parseGroups(sp.getString("groups", "[]")!!)
     }
 
+    /** Per-app content zoom in the main window (1 = laid out exactly as full screen). */
+    fun zoom(pkg: String?): Float = if (pkg == null) 1f else sp.getFloat("zoom:" + pkg, 1f)
+    fun setZoom(pkg: String, z: Float) { sp.edit().apply { if (z == 1f) remove("zoom:" + pkg) else putFloat("zoom:" + pkg, z) }.apply() }
+    /** Divider position remembered for an upper/lower pair of apps. */
+    fun splitRatio(top: String?, bottom: String?): Float? =
+        if (top == null || bottom == null) null else sp.getFloat("split:$top|$bottom", -1f).takeIf { it > 0f }
+    fun setSplitRatio(top: String, bottom: String, r: Float) { sp.edit().putFloat("split:$top|$bottom", r).apply() }
+
     fun setEdge(e: Edge) { if (e != Edge.LEFT && e != Edge.TOP) return; edge.value = e; sp.edit().putString("edge", e.name).apply() }
     fun setHandleSide(e: Edge) { handleSide.value = e; sp.edit().putString("handleSide", e.name).apply() }
     fun setHandleY(y: Float) { handleY.value = y; sp.edit().putFloat("handleY", y).apply() }

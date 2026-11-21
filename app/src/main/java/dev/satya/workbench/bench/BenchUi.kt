@@ -1,5 +1,7 @@
 package dev.satya.workbench.bench
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.material.icons.rounded.HorizontalSplit
 import androidx.compose.material.icons.rounded.CropPortrait
 import androidx.compose.ui.graphics.ImageBitmap
@@ -443,10 +445,29 @@ private fun MainHandle(b: Bench) {
                     HandleBtn(if (b.isSplit) Icons.Rounded.CropPortrait else Icons.Rounded.HorizontalSplit, hp(3)) {
                         if (b.isSplit) b.unsplit(keepTop = true) else b.pickForSplit()
                     }
-                    HandleBtn(Icons.Rounded.Close, hp(4)) { b.closeMain() }
+                    ZoomBtn(b, hp(4))
+                    HandleBtn(Icons.Rounded.Close, hp(5)) { b.closeMain() }
                 }
             }
         }
+    }
+}
+
+/** Zoom step button: briefly shows the new value ("112%") in place of its icon. */
+@Composable
+private fun ZoomBtn(b: Bench, modifier: Modifier) {
+    val label = b.zoomLabel
+    Box(
+        modifier
+            .height(26.dp)
+            .animateContentSize(spring(dampingRatio = 0.7f, stiffness = 600f))
+            .clip(CircleShape)
+            .background(if (label != null) Color(0xFF9BD39B) else Color(0x40FFFFFF))
+            .clickable { b.cycleZoom() },
+        contentAlignment = Alignment.Center
+    ) {
+        if (label != null) Text(label, color = Color(0xFF0B0C10), fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 9.dp))
+        else Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ZoomIn, null, tint = Color.White, modifier = Modifier.size(15.dp)) }
     }
 }
 

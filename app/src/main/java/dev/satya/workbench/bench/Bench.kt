@@ -227,6 +227,12 @@ class Bench(private val act: WorkbenchActivity) {
         return (dpi * bounds.width() / geo.w.toFloat()).roundToInt().coerceAtLeast(96)
     }
 
+    /** [densityFor] with the app's own zoom applied: a higher dpi draws the same layout bigger. */
+    private fun dpiOf(id: Int, bounds: Rect): Int {
+        val pkg = when (id) { mainTask -> mainPkg; splitTask -> splitPkg; else -> pkgOfTask(id) }
+        return (densityFor(bounds) * Prefs.zoom(pkg)).roundToInt().coerceAtLeast(96)
+    }
+
     private fun icon(pkg: String?): ImageBitmap? = pkg?.let { Apps.cachedIcon(it) ?: Apps.icon(act, it) }
 
     private fun pkgOfTask(id: Int): String? = tasks.firstOrNull { it.taskId == id }?.pkg
@@ -331,7 +337,7 @@ class Bench(private val act: WorkbenchActivity) {
             pendingSplitPkg = null
             if (splitTask == null) mainTask?.let { m ->
                 val r = Rect(geo.main)
-                withContext(Dispatchers.IO) { Sys.prepareFreeform(m, r, densityFor(r)) }
+                withContext(Dispatchers.IO) { Sys.prepareFreeform(m, r, dpiOf(m, r)) }
             }
         }
         if (pendingPkg != null && SystemClock.uptimeMillis() - pendingSince > 5000) {
@@ -437,12 +443,11 @@ class Bench(private val act: WorkbenchActivity) {
         val bounds = if (isMain && isSplit) splitRects().first else Rect(geo.main)
         val lower = splitTask.takeIf { isMain }
         val lowerRect = splitRects().second
-        val dpi = densityFor(bounds)
         val ok = withContext(Dispatchers.IO) {
-            Sys.prepareFreeform(id, bounds, dpi)
+            Sys.prepareFreeform(id, bounds, dpiOf(id, bounds))
             val shown = Sys.showTask(act, id, bounds)
             if (lower != null) {
-                Sys.prepareFreeform(lower, lowerRect, dpi)
+                Sys.prepareFreeform(lower, lowerRect, dpiOf(lower, lowerRect))
                 Sys.showTask(act, lower, lowerRect)
             }
             if (shown) Sys.focus(id)
@@ -506,7 +511,7 @@ class Bench(private val act: WorkbenchActivity) {
                 flyers.remove(f)
                 val f2 = Flyer(img, null, Rect(geo.full), Rect(geo.main), screenRadius, mainRadius)
                 flyers += f2
-                launch(Dispatchers.IO) { Sys.prepareFreeform(task, Rect(geo.main), densityFor(geo.main)) }
+                launch(Dispatchers.IO) { Sys.prepareFreeform(task, Rect(geo.main), dpiOf(task, Rect(geo.main))) }
                 animate(f2, withReveal = 1f)
                 mainImage = img
                 uncover(task)
@@ -514,7 +519,7 @@ class Bench(private val act: WorkbenchActivity) {
                 flyers.remove(f2)
                 return@op
             }
-            launch(Dispatchers.IO) { Sys.prepareFreeform(task, Rect(geo.main), densityFor(geo.main)) }
+            launch(Dispatchers.IO) { Sys.prepareFreeform(task, Rect(geo.main), dpiOf(task, Rect(geo.main))) }
             animate(f, withReveal = 1f)
             mainImage = img
             uncover(task)
@@ -584,7 +589,7 @@ class Bench(private val act: WorkbenchActivity) {
         val m = mainTask ?: return
         val b = Rect(geo.main)
         val dpi = densityFor(b)
-        scope.launch(Dispatchers.IO) { Sys.prepareFreeform(m, b, dpi) }
+        scope.launch(Dispatchers.IO) { Sys.prepareFreeform(m, b, dpiOf(m, b)) }
         scheduleReload(0)
     }
 
@@ -600,8 +605,7 @@ class Bench(private val act: WorkbenchActivity) {
             splitImage = null
             splitRatio = 0.5f
             val b = Rect(geo.main)
-            val dpi = densityFor(b)
-            scope.launch(Dispatchers.IO) { Sys.prepareFreeform(s, b, dpi) }
+            scope.launch(Dispatchers.IO) { Sys.prepareFreeform(s, b, dpiOf(s, b)) }
             scheduleReload(0)
             return
         }
@@ -658,7 +662,7 @@ class Bench(private val act: WorkbenchActivity) {
             persistSession()
             val r = splitRects().second
             val dpi = densityFor(r)
-            scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, r, dpi) }
+            scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, r, dpiOf(id, r)) }
             scheduleReload()
             return
         }
@@ -673,7 +677,7 @@ class Bench(private val act: WorkbenchActivity) {
             val dpi = densityFor(geo.main)
             if (Sys.windowingMode(info) != Sys.WM_FREEFORM || dpi != 0) {
                 val b = Rect(geo.main)
-                scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, b, dpi) }
+                scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, b, dpiOf(id, b)) }
             }
             scheduleReload()
             return
@@ -692,8 +696,7 @@ class Bench(private val act: WorkbenchActivity) {
         session += id
         persistSession()
         val b = Rect(geo.main)
-        val dpi = densityFor(b)
-        scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, b, dpi) }
+        scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, b, dpiOf(id, b)) }
         scheduleReload()
     }
 
@@ -772,10 +775,9 @@ class Bench(private val act: WorkbenchActivity) {
         mainImage = null
         flyers.addAll(fl)
         val bounds = Rect(geo.main)
-        val dpi = densityFor(bounds)
         session += id
         persistSession()
-        launch(Dispatchers.IO) { Sys.prepareFreeform(id, bounds, dpi) }
+        launch(Dispatchers.IO) { Sys.prepareFreeform(id, bounds, dpiOf(id, bounds)) }
         if (grow || sliding) animate(*fl.toTypedArray()) else {
             fl[0].p.snapTo(1f)
             fade?.p?.animateTo(1f, tween(300, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)))
@@ -1095,7 +1097,7 @@ class Bench(private val act: WorkbenchActivity) {
         splitTask = null
         splitImage = null
         splitPkg = null
-        if (!wasSplit) splitRatio = 0.5f
+        if (!wasSplit) splitRatio = Prefs.splitRatio(mainPkg, app.pkg) ?: 0.5f
         val (top, bottom) = splitRects()
         val existing = tasks.firstOrNull { it.pkg == app.pkg }
         val img = existing?.let { snaps[it.taskId] ?: withContext(Dispatchers.IO) { Sys.snapshot(it.taskId) }?.asImageBitmap() }
@@ -1113,10 +1115,9 @@ class Bench(private val act: WorkbenchActivity) {
             pendingSplitSince = SystemClock.uptimeMillis()
         }
         flyers.addAll(fl)
-        val dpi = densityFor(top)
         withContext(Dispatchers.IO) {
-            Sys.prepareFreeform(m, top, dpi)
-            existing?.let { Sys.prepareFreeform(it.taskId, bottom, dpi) }
+            Sys.prepareFreeform(m, top, dpiOf(m, top))
+            existing?.let { Sys.prepareFreeform(it.taskId, bottom, dpiOf(it.taskId, bottom)) }
         }
         animate(*fl.toTypedArray())
         if (oldLower != null) landing.remove(oldLower)
@@ -1144,6 +1145,25 @@ class Bench(private val act: WorkbenchActivity) {
         frames(3)
         flyers.removeAll(fl)
         scheduleReload(0)
+    }
+
+    /** Handle menu: step the main app's zoom; remembered for that app from now on. */
+    var zoomLabel by mutableStateOf<String?>(null); private set
+    private var zoomJob: Job? = null
+
+    fun cycleZoom() {
+        val m = mainTask ?: return
+        val pkg = mainPkg ?: return
+        val steps = listOf(1f, 1.12f, 1.25f, 0.88f)
+        val cur = Prefs.zoom(pkg)
+        val next = steps[(steps.indexOfFirst { kotlin.math.abs(it - cur) < 0.01f } + 1).mod(steps.size)]
+        Prefs.setZoom(pkg, next)
+        buzz(android.view.HapticFeedbackConstants.SEGMENT_TICK)
+        val r = Rect(mainShown)
+        scope.launch(Dispatchers.IO) { Sys.prepareFreeform(m, r, dpiOf(m, r)) }
+        zoomJob?.cancel()
+        zoomLabel = "${(next * 100).roundToInt()}%"
+        zoomJob = scope.launch { delay(1400); zoomLabel = null }
     }
 
     /** Tap on the divider: the two panes trade places. */
@@ -1209,8 +1229,7 @@ class Bench(private val act: WorkbenchActivity) {
         flyers += f1
         flyers += f2
         val b = Rect(geo.main)
-        val dpi = densityFor(b)
-        launch(Dispatchers.IO) { Sys.prepareFreeform(keepId, b, dpi) }
+        launch(Dispatchers.IO) { Sys.prepareFreeform(keepId, b, dpiOf(keepId, b)) }
         animate(f1, f2)
         landing.remove(goneId)
         mainImage = keepImg
@@ -1240,6 +1259,9 @@ class Bench(private val act: WorkbenchActivity) {
             else -> scope.launch {
                 resizeJob?.join()
                 applySplitBounds()
+                val t = mainPkg
+                val l = splitPkg
+                if (t != null && l != null) Prefs.setSplitRatio(t, l, splitRatio)
                 buzz(android.view.HapticFeedbackConstants.GESTURE_END)
             }
         }
@@ -1251,10 +1273,9 @@ class Bench(private val act: WorkbenchActivity) {
             val m = mainTask ?: return
             val s = splitTask ?: return
             val (top, bottom) = splitRects(r)
-            val dpi = densityFor(top)
             withContext(Dispatchers.IO) {
-                Sys.prepareFreeform(m, top, dpi)
-                Sys.prepareFreeform(s, bottom, dpi)
+                Sys.prepareFreeform(m, top, dpiOf(m, top))
+                Sys.prepareFreeform(s, bottom, dpiOf(s, bottom))
             }
             delay(32)
             if (splitRatio == r) return
@@ -1447,8 +1468,8 @@ class Bench(private val act: WorkbenchActivity) {
             val parked = session.filter { it != m }
             coroutineScope {
                 launch(Dispatchers.IO) {
-                    Sys.prepareFreeform(m, bounds, dpi)
-                    for (id in parked) Sys.prepareFreeform(id, bounds, dpi)
+                    Sys.prepareFreeform(m, bounds, dpiOf(m, bounds))
+                    for (id in parked) Sys.prepareFreeform(id, bounds, dpiOf(id, bounds))
                 }
                 animate(f, withReveal = 1f)
             }
@@ -1458,9 +1479,8 @@ class Bench(private val act: WorkbenchActivity) {
             flyers.remove(f)
         } else {
             val bounds = Rect(geo.main)
-            val dpi = densityFor(bounds)
             val parked = session.toList()
-            scope.launch(Dispatchers.IO) { for (id in parked) Sys.prepareFreeform(id, bounds, dpi) }
+            scope.launch(Dispatchers.IO) { for (id in parked) Sys.prepareFreeform(id, bounds, dpiOf(id, bounds)) }
             reveal.animateTo(1f, tween(320, easing = EaseOut))
         }
     }
@@ -1522,13 +1542,12 @@ class Bench(private val act: WorkbenchActivity) {
         cover()
         suppressAdoptUntil = SystemClock.uptimeMillis() + 3000
         val bounds = Rect(geo.main)
-        val dpi = densityFor(bounds)
         withContext(Dispatchers.IO) {
             for (cn in comps.drop(1).reversed()) {
                 val t = tasks.firstOrNull { it.pkg == cn.packageName }
                 if (t != null) {
                     if (t.taskId != mainTask) {
-                        Sys.prepareFreeform(t.taskId, bounds, dpi)
+                        Sys.prepareFreeform(t.taskId, bounds, dpiOf(t.taskId, bounds))
                         session += t.taskId
                     }
                 } else {
