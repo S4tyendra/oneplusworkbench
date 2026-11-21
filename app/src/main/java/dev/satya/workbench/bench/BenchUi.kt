@@ -157,7 +157,7 @@ fun BenchUi(b: Bench) {
                 .fillMaxSize()
                 .graphicsLayer { alpha = b.reveal.value }
                 .background(Color.Black.copy(alpha = 0.7f * opacity))
-                .pointerInput(Unit) { detectTapGestures { b.onBackdropTap() } }
+                .cleanTap { b.onBackdropTap() }
         )
         MainArea(b)
         if (b.mainTask != null) MainHandle(b)
@@ -266,27 +266,36 @@ private fun MainHandle(b: Bench) {
         ) { menu ->
             if (!menu) {
                 var dy by remember { mutableStateOf(0f) }
+                var dx by remember { mutableStateOf(0f) }
                 Box(
                     Modifier
                         .fillMaxHeight()
-                        .width(120.dp)
+                        .fillMaxWidth(0.7f)
                         .pointerInput(Unit) { detectTapGestures(onTap = { b.handleMenu = true }) }
                         .pointerInput(Unit) {
                             val lim = with(d) { 36.dp.toPx() }
-                            detectVerticalDragGestures(
-                                onDragStart = { dy = 0f },
+                            // Down: minimize, up: full screen, sideways: previous / next app.
+                            detectDragGestures(
+                                onDragStart = { dy = 0f; dx = 0f },
                                 onDragEnd = {
-                                    if (dy > lim) b.minimize() else if (dy < -lim) b.expand()
-                                    dy = 0f
+                                    when {
+                                        kotlin.math.abs(dx) > kotlin.math.abs(dy) && kotlin.math.abs(dx) > lim -> b.quickSwitch(if (dx < 0) 1 else -1)
+                                        dy > lim -> b.minimize()
+                                        dy < -lim -> b.expand()
+                                    }
+                                    dy = 0f; dx = 0f
                                 },
-                                onDragCancel = { dy = 0f }
-                            ) { _, delta -> dy += delta }
+                                onDragCancel = { dy = 0f; dx = 0f }
+                            ) { c, delta -> c.consume(); dy += delta.y; dx += delta.x }
                         },
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         Modifier
-                            .graphicsLayer { translationY = (dy * 0.25f).coerceIn(-24f, 24f) }
+                            .graphicsLayer {
+                                translationY = (dy * 0.25f).coerceIn(-24f, 24f)
+                                translationX = (dx * 0.35f).coerceIn(-60f, 60f)
+                            }
                             .size(44.dp, 5.dp)
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.9f))

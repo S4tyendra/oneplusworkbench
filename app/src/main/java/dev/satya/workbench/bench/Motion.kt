@@ -11,6 +11,23 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
+
+/** A tap that does not fire when the finger travelled (detectTapGestures fires on any release, even after a swipe). */
+fun Modifier.cleanTap(onTap: () -> Unit): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val slop = viewConfiguration.touchSlop
+        while (true) {
+            val ev = awaitPointerEvent()
+            val c = ev.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
+            if ((c.position - down.position).getDistance() > slop || c.isConsumed) return@awaitEachGesture
+            if (!c.pressed) { onTap(); return@awaitEachGesture }
+        }
+    }
+}
 
 /**
  * Staggered entrance: the element rises [rise], grows from [from] and fades in on a soft spring, [step] ms

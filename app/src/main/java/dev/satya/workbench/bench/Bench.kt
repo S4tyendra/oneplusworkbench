@@ -548,7 +548,19 @@ class Bench(private val act: WorkbenchActivity) {
 
     fun switchTo(id: Int, fromKey: String?) = op { switchImpl(id, fromKey?.let { cardRects[it] }) }
 
-    private suspend fun switchImpl(id: Int, from: Rect?) = coroutineScope {
+    /** Handle swipe: the next (dir = 1) or previous (-1) running app in strip order slides into the main window. */
+    fun quickSwitch(dir: Int) {
+        val running = entries(Prefs.pinned.value).mapNotNull { it.task?.taskId }
+        if (running.isEmpty()) return
+        val cur = running.indexOf(mainTask)
+        val next = if (cur < 0) running.first() else running.getOrNull(cur + dir) ?: run {
+            buzz(android.view.HapticFeedbackConstants.REJECT)
+            return
+        }
+        op { switchImpl(next, null, slide = dir) }
+    }
+
+    private suspend fun switchImpl(id: Int, from: Rect?, slide: Int = 0) = coroutineScope {
         actionsFor = null
         handleMenu = false
         if (id != mainTask) buzz(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
@@ -567,9 +579,18 @@ class Bench(private val act: WorkbenchActivity) {
         val fl = ArrayList<Flyer>()
         // Nothing in the main area yet: the card's preview grows out of the strip into it instead.
         val grow = old == null
-        val start = if (grow) (cardRects["t$id"]?.let { Rect(it) } ?: from ?: cardRectFor("t$id")) else main
+        val sliding = slide != 0 && old != null
+        val shift = (main.width() * 0.55f).roundToInt() * slide
+        val start = when {
+            grow -> cardRects["t$id"]?.let { Rect(it) } ?: from ?: cardRectFor("t$id")
+            sliding -> Rect(main).apply { offset(shift, 0) }
+            else -> main
+        }
+        // Quick switch: the old window slides out the opposite way, a little smaller, as the new one slides in.
+        val oldTo = if (sliding) shrink(main, 0.9f).apply { offset(-shift, 0) } else Rect(main)
+        if (sliding) fl += Flyer(mainImage, icon(oldPkg), Rect(main), oldTo, mainRadius, mainRadius, alphaTo = 0f)
         fl += Flyer(newImg, icon(item?.pkg), start, Rect(main), if (grow) cardRadius else mainRadius, mainRadius)
-        val fade = if (old != null) Flyer(mainImage, icon(oldPkg), Rect(main), Rect(main), mainRadius, mainRadius, alphaTo = 0f) else null
+        val fade = if (old != null && !sliding) Flyer(mainImage, icon(oldPkg), Rect(main), Rect(main), mainRadius, mainRadius, alphaTo = 0f) else null
         if (fade != null) fl += fade
         mainTask = id
         mainPkg = item?.pkg
@@ -580,7 +601,7 @@ class Bench(private val act: WorkbenchActivity) {
         session += id
         persistSession()
         launch(Dispatchers.IO) { Sys.prepareFreeform(id, bounds, dpi) }
-        if (grow) animate(fl[0]) else {
+        if (grow || sliding) animate(*fl.toTypedArray()) else {
             fl[0].p.snapTo(1f)
             fade?.p?.animateTo(1f, tween(300, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)))
         }
