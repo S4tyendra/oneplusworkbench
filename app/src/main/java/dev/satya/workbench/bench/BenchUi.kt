@@ -1,5 +1,6 @@
 package dev.satya.workbench.bench
 
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.ui.draw.blur
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -401,6 +402,38 @@ private fun StripHeader(b: Bench) {
     }
 }
 
+/** Unread notifications of [pkg]: a red count bubble that pops in (and bumps when the count grows). */
+@Composable
+private fun NotifBadge(pkg: String, modifier: Modifier) {
+    val counts by dev.satya.workbench.data.Notifs.counts.collectAsState()
+    val n = counts[pkg] ?: 0
+    val bump = remember { Animatable(1f) }
+    var last by remember { mutableStateOf(n) }
+    LaunchedEffect(n) {
+        if (n > last) { bump.snapTo(1.35f); bump.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 600f)) }
+        last = n
+    }
+    androidx.compose.animation.AnimatedVisibility(
+        visible = n > 0,
+        modifier = modifier,
+        enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = 600f)) + fadeIn(),
+        exit = androidx.compose.animation.scaleOut(tween(150)) + fadeOut(tween(150))
+    ) {
+        Box(
+            Modifier
+                .graphicsLayer { scaleX = bump.value; scaleY = bump.value }
+                .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFE5484D))
+                .border(1.5.dp, Color(0xFF0B0C10), CircleShape)
+                .padding(horizontal = 5.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(if (n > 99) "99+" else n.toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, lineHeight = 10.sp)
+        }
+    }
+}
+
 @Composable
 private fun RoundBtn(icon: ImageVector, onClick: () -> Unit) {
     dev.satya.workbench.ui.CouiRoundButton(icon, null, 46.dp, onClick = onClick)
@@ -500,6 +533,7 @@ private fun StripItem(b: Bench, e: StripEntry, modifier: Modifier) {
                     contentAlignment = Alignment.Center
                 ) { if (icon != null) Image(icon, null, Modifier.size(40.dp)) }
             }
+            NotifBadge(e.pkg, Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = pxDp(g.cardW - g.cardVisible) + 4.dp))
             if (e.pinned) {
                 Box(
                     Modifier.align(Alignment.TopStart).padding(5.dp).size(17.dp).clip(CircleShape).background(Color(0xB3000000)),

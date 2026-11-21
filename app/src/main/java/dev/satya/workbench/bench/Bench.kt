@@ -367,6 +367,20 @@ class Bench(private val act: WorkbenchActivity) {
         Sys.register(listener)
         scope.launch(Dispatchers.IO) { Apps.refresh(act) }
         scope.launch { reloadNow() }
+        scope.launch {
+            var prev = dev.satya.workbench.data.Notifs.counts.value
+            dev.satya.workbench.data.Notifs.counts.collect { now ->
+                val grew = now.filter { (p, c) -> c > (prev[p] ?: 0) }.keys
+                prev = now
+                if (grew.isEmpty()) return@collect
+                // The app redraws a moment after posting; then its card shows the new content.
+                delay(700)
+                for (t in tasks) if (t.pkg in grew && t.taskId != mainTask) {
+                    val bmp = withContext(Dispatchers.IO) { Sys.snapshot(t.taskId, low = true) } ?: continue
+                    snaps[t.taskId] = bmp.asImageBitmap()
+                }
+            }
+        }
         if (task == null) {
             op { reveal.animateTo(1f, tween(360, easing = EaseOut)) }
             return

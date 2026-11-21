@@ -24,5 +24,14 @@ class WorkbenchApp : Application() {
         }
         thread(name = "wb-apps") { Apps.refresh(this) }
         dev.satya.workbench.ui.Kit.warm(this)
+        // Notification access for strip badges and the notifications panel: granted through root, no settings trip.
+        thread(name = "wb-notif") {
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            val cn = dev.satya.workbench.data.Notifs.component(this)
+            if (!nm.isNotificationListenerAccessGranted(cn)) {
+                val r = dev.satya.workbench.sys.Root.run("cmd notification allow_listener " + cn.flattenToString())
+                Log.i(Sys.TAG, "allow_listener: " + r.code + " " + r.out.trim())
+            }
+        }
     }
 }
