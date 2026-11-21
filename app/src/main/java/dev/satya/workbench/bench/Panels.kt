@@ -1,5 +1,7 @@
 package dev.satya.workbench.bench
 
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import android.graphics.Rect
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -131,13 +133,13 @@ private fun SearchField(value: String, onChange: (String) -> Unit, hint: String,
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AppCell(app: AppEntry, pinned: Boolean, badge: String? = null, onClick: (Rect) -> Unit, onLong: (() -> Unit)?) {
+private fun AppCell(app: AppEntry, pinned: Boolean, modifier: Modifier = Modifier, badge: String? = null, onClick: (Rect) -> Unit, onLong: (() -> Unit)?) {
     val icon = appIcon(app.pkg)
     var rect by remember { mutableStateOf(Rect()) }
     val haptic = LocalHapticFeedback.current
     val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Column(
-        Modifier
+        modifier
             .couiPress(press)
             .combinedClickable(
                 interactionSource = press,
@@ -184,6 +186,9 @@ fun SearchPanel(b: Bench) {
     val pins by Prefs.pinned.collectAsState()
     var q by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf(false) }
+    // Entrance cascade only right after the panel opens; cells scrolled into view later just appear.
+    val openedAt = remember { android.os.SystemClock.uptimeMillis() }
+    val fresh = { android.os.SystemClock.uptimeMillis() - openedAt < 500 }
     val fr = remember { FocusRequester() }
     val grid = rememberLazyGridState()
     val results = remember(q, apps) {
@@ -201,7 +206,7 @@ fun SearchPanel(b: Bench) {
     // The most-used rows arrive after the grid is shown; the grid anchors to its first visible app, so jump back up.
     LaunchedEffect(top) { if (q.isBlank()) grid.requestScrollToItem(0) }
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().padding(horizontal = 16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp, bottom = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.popIn(0, rise = 28.dp, from = 0.94f).padding(top = 10.dp, bottom = 10.dp)) {
             dev.satya.workbench.ui.CouiSearchBar("Search apps", { q = it }, {
                 results.firstOrNull()?.let { b.openApp(it.component, it.user, null) }
             }, Modifier.weight(1f).height(56.dp), onEditing = { editing = it })
@@ -217,7 +222,7 @@ fun SearchPanel(b: Bench) {
                 }
             }
         }
-        if (q.isBlank()) Text("Long-press an app to pin it to the strip", color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
+        if (q.isBlank()) Text("Long-press an app to pin it to the strip", color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp, modifier = Modifier.popIn(0, fresh()).padding(start = 4.dp, bottom = 8.dp))
         LazyVerticalGrid(
             state = grid,
             columns = GridCells.Fixed(5),
@@ -226,17 +231,26 @@ fun SearchPanel(b: Bench) {
             modifier = Modifier.weight(1f)
         ) {
             if (q.isBlank() && top.isNotEmpty()) {
-                item(key = "h:top", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) { GridHeader("Most used") }
-                items(top, key = { "top:" + it.key + "#" + it.user.hashCode() }) { app ->
-                    AppCell(app, pins.contains(app.key), onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) })
+                item(key = "h:top", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) { GridHeader("Most used", Modifier.popIn(0, fresh())) }
+                    itemsIndexed(top, key = { _, it -> "top:" + it.key + "#" + it.user.hashCode() }) { i, app ->
+                    AppCell(app, pins.contains(app.key), Modifier.animateItem().popIn(1 + i / 5 + i % 5, fresh()),
+                        onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) })
                 }
                 item(key = "h:div", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                    Box(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp).height(1.dp).background(Color.White.copy(alpha = 0.14f)))
+                    Box(Modifier.popIn(4, fresh(), from = 0.6f).fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp).height(1.dp).background(Color.White.copy(alpha = 0.14f)))
                 }
-                item(key = "h:all", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) { GridHeader("All apps") }
+                item(key = "h:all", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) { GridHeader("All apps", Modifier.popIn(5, fresh())) }
             }
-            items(results, key = { it.key + "#" + it.user.hashCode() }) { app ->
-                AppCell(app, pins.contains(app.key), onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) })
+            val base = if (q.isBlank() && top.isNotEmpty()) 6 else 1
+            itemsIndexed(results, key = { _, it -> it.key + "#" + it.user.hashCode() }) { i, app ->
+                AppCell(app, pins.contains(app.key),
+                    // filtering: survivors glide to their new cells, newcomers spring in, the rest shrink away
+                    Modifier.animateItem(
+                        fadeInSpec = androidx.compose.animation.core.spring(stiffness = 500f),
+                        placementSpec = androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 420f),
+                        fadeOutSpec = androidx.compose.animation.core.tween(120)
+                    ).popIn(base + i / 5 + i % 5, fresh()),
+                    onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) })
             }
         }
     }
@@ -254,8 +268,8 @@ fun Modifier.couiPress(source: androidx.compose.foundation.interaction.Interacti
 })
 
 @Composable
-private fun GridHeader(text: String) {
-    Text(text, color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 6.dp, top = 2.dp, bottom = 2.dp))
+private fun GridHeader(text: String, modifier: Modifier = Modifier) {
+    Text(text, color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = modifier.padding(start = 6.dp, top = 2.dp, bottom = 2.dp))
 }
 
 @Composable
@@ -278,7 +292,9 @@ fun GroupsPanel(b: Bench) {
             Text("No groups yet.", color = Color.White.copy(alpha = 0.45f), fontSize = 14.sp, modifier = Modifier.padding(vertical = 12.dp))
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
-            items(groups, key = { it.id }) { g -> GroupRow(g, onOpen = { b.launchGroup(g) }, onDelete = { Prefs.deleteGroup(g.id) }) }
+            itemsIndexed(groups, key = { _, it -> it.id }) { i, g ->
+                Box(Modifier.animateItem().popIn(3 + i)) { GroupRow(g, onOpen = { b.launchGroup(g) }, onDelete = { Prefs.deleteGroup(g.id) }) }
+            }
         }
         Text("Strip position", color = Dim, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
         dev.satya.workbench.ui.CouiSegments(

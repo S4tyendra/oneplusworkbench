@@ -212,14 +212,15 @@ private fun EmptyMain(b: Bench) {
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-            Text("Workbench", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Text("Workbench", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.popIn(0, step = 60))
             Spacer(Modifier.height(6.dp))
             Text(
                 "Tap a card to bring an app here,\nor search for any app.",
-                color = Color.White.copy(alpha = 0.65f), fontSize = 14.sp, textAlign = TextAlign.Center
+                color = Color.White.copy(alpha = 0.65f), fontSize = 14.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.popIn(1, step = 60)
             )
             Spacer(Modifier.height(20.dp))
-            dev.satya.workbench.ui.CouiButton("Search apps", icon = Icons.Rounded.Search) { b.openModal(Modal.SEARCH) }
+            dev.satya.workbench.ui.CouiButton("Search apps", Modifier.popIn(2, step = 60), icon = Icons.Rounded.Search) { b.openModal(Modal.SEARCH) }
             if (groups.isNotEmpty()) {
                 Spacer(Modifier.height(12.dp))
                 dev.satya.workbench.ui.CouiButton("Groups", primary = false, icon = Icons.Rounded.Layers) { b.openModal(Modal.GROUPS) }
@@ -254,7 +255,15 @@ private fun MainHandle(b: Bench) {
             .graphicsLayer { alpha = b.reveal.value },
         contentAlignment = Alignment.Center
     ) {
-        AnimatedContent(b.handleMenu, transitionSpec = { fadeIn(tween(140)) togetherWith fadeOut(tween(100)) }, label = "handle") { menu ->
+        AnimatedContent(
+            b.handleMenu,
+            transitionSpec = {
+                (fadeIn(tween(120)) + scaleIn(spring(dampingRatio = 0.66f, stiffness = 520f), initialScale = 0.35f)) togetherWith
+                    (fadeOut(tween(90)) + androidx.compose.animation.scaleOut(tween(120), targetScale = 0.35f)) using
+                    androidx.compose.animation.SizeTransform(clip = false)
+            },
+            label = "handle"
+        ) { menu ->
             if (!menu) {
                 var dy by remember { mutableStateOf(0f) }
                 Box(
@@ -285,10 +294,11 @@ private fun MainHandle(b: Bench) {
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    HandleBtn(Icons.Rounded.Remove) { b.minimize() }
-                    HandleBtn(Icons.Rounded.OpenInFull) { b.expand() }
-                    HandleBtn(if (b.isMainPinned()) Icons.Rounded.PushPin else Icons.Outlined.PushPin) { b.togglePinMain() }
-                    HandleBtn(Icons.Rounded.Close) { b.closeMain() }
+                    val hp = { i: Int -> Modifier.popIn(i, step = 35, rise = 6.dp, from = 0.4f, damping = 0.55f, stiffness = 600f) }
+                    HandleBtn(Icons.Rounded.Remove, hp(0)) { b.minimize() }
+                    HandleBtn(Icons.Rounded.OpenInFull, hp(1)) { b.expand() }
+                    HandleBtn(if (b.isMainPinned()) Icons.Rounded.PushPin else Icons.Outlined.PushPin, hp(2)) { b.togglePinMain() }
+                    HandleBtn(Icons.Rounded.Close, hp(3)) { b.closeMain() }
                 }
             }
         }
@@ -296,9 +306,9 @@ private fun MainHandle(b: Bench) {
 }
 
 @Composable
-private fun HandleBtn(icon: ImageVector, onClick: () -> Unit) {
+private fun HandleBtn(icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        Modifier
+        modifier
             .size(26.dp)
             .clip(CircleShape)
             .background(Color(0x40FFFFFF))
@@ -487,7 +497,11 @@ private fun StripItem(b: Bench, e: StripEntry, modifier: Modifier) {
                     contentAlignment = Alignment.Center
                 ) { Icon(Icons.Rounded.PushPin, null, tint = Color.White, modifier = Modifier.size(10.dp)) }
             }
-            androidx.compose.animation.AnimatedVisibility(visible = b.actionsFor == e.key, enter = fadeIn(tween(120)), exit = fadeOut(tween(100))) { CardActions(b, e) }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = b.actionsFor == e.key,
+                enter = fadeIn(tween(120)),
+                exit = fadeOut(tween(110)) + androidx.compose.animation.scaleOut(tween(140), targetScale = 0.9f)
+            ) { CardActions(b, e) }
         }
     }
 }
@@ -496,19 +510,20 @@ private fun StripItem(b: Bench, e: StripEntry, modifier: Modifier) {
 private fun CardActions(b: Bench, e: StripEntry) {
     Box(Modifier.fillMaxSize().background(Color(0xC0000000)), contentAlignment = Alignment.Center) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            ActionBtn(Icons.Rounded.OpenInFull, Color(0x40FFFFFF)) { b.actionsFor = null; b.openFull(e) }
-            ActionBtn(if (e.pinned) Icons.Rounded.PushPin else Icons.Outlined.PushPin, Color(0x40FFFFFF)) {
+            val pop = Modifier
+            ActionBtn(Icons.Rounded.OpenInFull, Color(0x40FFFFFF), pop.popIn(0, step = 45, rise = 10.dp, from = 0.3f, damping = 0.52f, stiffness = 520f)) { b.actionsFor = null; b.openFull(e) }
+            ActionBtn(if (e.pinned) Icons.Rounded.PushPin else Icons.Outlined.PushPin, Color(0x40FFFFFF), pop.popIn(1, step = 45, rise = 10.dp, from = 0.3f, damping = 0.52f, stiffness = 520f)) {
                 b.togglePin(e); b.actionsFor = null
             }
-            if (e.task != null) ActionBtn(Icons.Rounded.Close, Color(0xCCE5484D)) { b.closeEntry(e) }
+            if (e.task != null) ActionBtn(Icons.Rounded.Close, Color(0xCCE5484D), pop.popIn(2, step = 45, rise = 10.dp, from = 0.3f, damping = 0.52f, stiffness = 520f)) { b.closeEntry(e) }
         }
     }
 }
 
 @Composable
-private fun ActionBtn(icon: ImageVector, bg: Color, onClick: () -> Unit) {
+private fun ActionBtn(icon: ImageVector, bg: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        Modifier.size(32.dp).clip(CircleShape).background(bg).clickable(onClick = onClick),
+        modifier.size(32.dp).clip(CircleShape).background(bg).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(17.dp)) }
 }
@@ -657,8 +672,12 @@ private fun Panels(b: Bench) {
     if (b.modal != null) last = b.modal
     AnimatedVisibility(
         visible = b.modal != null,
-        enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.97f),
-        exit = fadeOut(tween(140))
+        enter = fadeIn(tween(160)) +
+            androidx.compose.animation.slideInVertically(spring(dampingRatio = 0.82f, stiffness = 420f)) { it / 16 } +
+            scaleIn(spring(dampingRatio = 0.82f, stiffness = 420f), initialScale = 0.93f),
+        exit = fadeOut(tween(150)) +
+            androidx.compose.animation.slideOutVertically(tween(180)) { it / 28 } +
+            androidx.compose.animation.scaleOut(tween(180), targetScale = 0.96f)
     ) {
         Box(Modifier.fillMaxSize().background(Color(0xB30B0C10)).pointerInput(Unit) { detectTapGestures { } }) {
             when (last) {
