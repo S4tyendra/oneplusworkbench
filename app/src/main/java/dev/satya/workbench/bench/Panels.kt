@@ -1,5 +1,8 @@
 package dev.satya.workbench.bench
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import android.graphics.Rect
@@ -133,7 +136,7 @@ private fun SearchField(value: String, onChange: (String) -> Unit, hint: String,
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AppCell(app: AppEntry, pinned: Boolean, modifier: Modifier = Modifier, badge: String? = null, onClick: (Rect) -> Unit, onLong: (() -> Unit)?) {
+private fun AppCell(app: AppEntry, pinned: Boolean, modifier: Modifier = Modifier, badge: String? = null, onClick: (Rect) -> Unit, onLong: (() -> Unit)?, bench: Bench? = null) {
     val icon = appIcon(app.pkg)
     var rect by remember { mutableStateOf(Rect()) }
     val haptic = LocalHapticFeedback.current
@@ -145,8 +148,26 @@ private fun AppCell(app: AppEntry, pinned: Boolean, modifier: Modifier = Modifie
                 interactionSource = press,
                 indication = null,
                 onClick = { onClick(rect) },
-                onLongClick = onLong?.let { f -> { haptic.performHapticFeedback(HapticFeedbackType.LongPress); f() } }
+                // With a bench to drop on, the long press belongs to the drag gesture below (still pins if you don't move).
+                onLongClick = if (bench != null) null else onLong?.let { f -> { haptic.performHapticFeedback(HapticFeedbackType.LongPress); f() } }
             )
+            .then(if (bench == null) Modifier else Modifier.pointerInput(app.key) {
+                var moved = false
+                var acc = Offset.Zero
+                val slop = 14.dp.toPx()
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { moved = false; acc = Offset.Zero; haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                    onDrag = { c, d ->
+                        c.consume()
+                        acc += d
+                        val p = Offset(rect.exactCenterX(), rect.exactCenterY()) + acc
+                        if (!moved && acc.getDistance() > slop) { moved = true; bench.beginAppDrag(app, p) }
+                        if (moved) bench.appDragAt(p)
+                    },
+                    onDragEnd = { if (moved) bench.endAppDrag() else onLong?.invoke() },
+                    onDragCancel = { if (moved) bench.endAppDrag(cancel = true) }
+                )
+            })
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -234,7 +255,7 @@ fun SearchPanel(b: Bench) {
                 item(key = "h:top", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) { GridHeader("Most used", Modifier.popIn(0, fresh())) }
                     itemsIndexed(top, key = { _, it -> "top:" + it.key + "#" + it.user.hashCode() }) { i, app ->
                     AppCell(app, pins.contains(app.key), Modifier.animateItem().popIn(1 + i / 5 + i % 5, fresh()),
-                        onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) })
+                        onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) }, bench = b)
                 }
                 item(key = "h:div", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                     Box(Modifier.popIn(4, fresh(), from = 0.6f).fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp).height(1.dp).background(Color.White.copy(alpha = 0.14f)))
@@ -250,7 +271,7 @@ fun SearchPanel(b: Bench) {
                         placementSpec = androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 420f),
                         fadeOutSpec = androidx.compose.animation.core.tween(120)
                     ).popIn(base + i / 5 + i % 5, fresh()),
-                    onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) })
+                    onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) }, bench = b)
             }
         }
     }

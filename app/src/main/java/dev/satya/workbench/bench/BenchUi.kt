@@ -153,7 +153,7 @@ fun BenchUi(b: Bench) {
             .collect { b.setBlur(it) }
     }
     // Blur the whole bench (strip, main window, buttons) under the search / groups panels.
-    val panelBlur by androidx.compose.animation.core.animateDpAsState(if (b.modal != null) 28.dp else 0.dp, tween(220), label = "panelBlur")
+    val panelBlur by androidx.compose.animation.core.animateDpAsState(if (b.modal != null && b.appDrag == null) 28.dp else 0.dp, tween(220), label = "panelBlur")
     Box(Modifier.fillMaxSize()) {
       Box(Modifier.fillMaxSize().then(if (panelBlur > 0.dp) Modifier.blur(panelBlur) else Modifier)) {
         // Dim + tap-to-exit backdrop
@@ -175,6 +175,49 @@ fun BenchUi(b: Bench) {
         FlyerLayer(b)
       }
         Panels(b)
+        if (b.appDrag != null) AppDragLayer(b)
+    }
+}
+
+/** Dragging an app out of search: the main window and the strip light up as places to drop it. */
+@Composable
+private fun AppDragLayer(b: Bench) {
+    val app = b.appDrag ?: return
+    val p = b.appDragPos
+    val hit = b.dropTargetAt(p)
+    val icon = appIcon(app.pkg)
+    val d = LocalDensity.current
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = 500f)) }
+    Box(Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }) {
+        DropRect(b.geo.main, "Open here", hit == Bench.DropTarget.MAIN, b.mainRadius)
+        DropRect(Rect(b.geo.strip).apply { inset(-b.geo.dp(4), 0) }, "Keep in strip", hit == Bench.DropTarget.STRIP, with(d) { 22.dp.toPx() })
+        val sz = 64.dp
+        val lift by animateFloatAsState(if (hit != null) 1.18f else 1.05f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "lift")
+        if (icon != null) Image(
+            icon, null,
+            Modifier
+                .offset { androidx.compose.ui.unit.IntOffset((p.x - sz.toPx() / 2).roundToInt(), (p.y - sz.toPx() / 2).roundToInt()) }
+                .size(sz)
+                .graphicsLayer { scaleX = lift * appear.value; scaleY = lift * appear.value; shadowElevation = 18.dp.toPx(); shape = RoundedCornerShape(18.dp); clip = true }
+        )
+    }
+}
+
+@Composable
+private fun DropRect(r: Rect, label: String, hot: Boolean, radius: Float) {
+    val t by animateFloatAsState(if (hot) 1f else 0f, spring(dampingRatio = 0.7f, stiffness = 500f), label = "drop")
+    val shape = RoundedCornerShape(with(LocalDensity.current) { radius.toDp() })
+    Box(
+        Modifier.at(r)
+            .graphicsLayer { val s = 1f - 0.02f * t; scaleX = s; scaleY = s }
+            .clip(shape)
+            .background(Color(0xFF9BD39B).copy(alpha = 0.06f + 0.16f * t))
+            .border((1.5f + 1.5f * t).dp, Color(0xFF9BD39B).copy(alpha = 0.45f + 0.55f * t), shape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = Color.White.copy(alpha = 0.7f + 0.3f * t), fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.clip(CircleShape).background(Color(0x99000000)).padding(horizontal = 14.dp, vertical = 7.dp))
     }
 }
 
@@ -800,7 +843,8 @@ private fun Panels(b: Bench) {
             androidx.compose.animation.slideOutVertically(tween(180)) { it / 28 } +
             androidx.compose.animation.scaleOut(tween(180), targetScale = 0.96f)
     ) {
-        Box(Modifier.fillMaxSize().background(Color(0xB30B0C10)).pointerInput(Unit) { detectTapGestures { } }) {
+        val shown by animateFloatAsState(if (b.appDrag != null) 0f else 1f, tween(180), label = "panelHide")
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = shown }.background(Color(0xB30B0C10)).pointerInput(Unit) { detectTapGestures { } }) {
             when (last) {
                 Modal.SEARCH -> SearchPanel(b)
                 Modal.GROUPS -> GroupsPanel(b)

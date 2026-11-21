@@ -123,6 +123,16 @@ class Bench(private val act: WorkbenchActivity) {
     /** Something is being dragged somewhere on screen (from any app): the strip turns into drop targets. */
     var dropActive by mutableStateOf(false)
     var shelfActionsFor by mutableStateOf<String?>(null)
+    /** An app icon being dragged out of search: where the finger is. */
+    var appDrag by mutableStateOf<dev.satya.workbench.data.AppEntry?>(null); private set
+    var appDragPos by mutableStateOf(Offset.Zero); private set
+
+    enum class DropTarget { MAIN, STRIP }
+    fun dropTargetAt(p: Offset): DropTarget? = when {
+        geo.main.contains(p.x.toInt(), p.y.toInt()) -> DropTarget.MAIN
+        Rect(geo.strip).apply { inset(0, -geo.dp(12)) }.contains(p.x.toInt(), p.y.toInt()) -> DropTarget.STRIP
+        else -> null
+    }
     val listState = LazyListState()
     val cardRects = HashMap<String, Rect>()
 
@@ -901,6 +911,60 @@ class Bench(private val act: WorkbenchActivity) {
             )
         }
         finishQuietly()
+    }
+
+    // ------------------------------------------------------------------ drag an app out of search
+
+    fun beginAppDrag(app: dev.satya.workbench.data.AppEntry, p: Offset) {
+        appDrag = app
+        appDragPos = p
+        act.hideIme()
+    }
+
+    fun appDragAt(p: Offset) {
+        val before = dropTargetAt(appDragPos)
+        appDragPos = p
+        val now = dropTargetAt(p)
+        if (now != before && now != null) buzz(android.view.HapticFeedbackConstants.SEGMENT_TICK)
+    }
+
+    fun endAppDrag(cancel: Boolean = false) {
+        val app = appDrag ?: return
+        val p = appDragPos
+        appDrag = null
+        if (cancel) return
+        val s = geo.dp(52)
+        val from = Rect(p.x.toInt() - s / 2, p.y.toInt() - s / 2, p.x.toInt() + s / 2, p.y.toInt() + s / 2)
+        when (dropTargetAt(p)) {
+            DropTarget.MAIN -> openApp(app.component, app.user, from)
+            DropTarget.STRIP -> dockApp(app)
+            null -> buzz(android.view.HapticFeedbackConstants.GESTURE_END)
+        }
+    }
+
+    /** Dropped on the strip: pinned there and started in the background, so its card is ready with a preview. */
+    fun dockApp(app: dev.satya.workbench.data.AppEntry) = op {
+        buzz(android.view.HapticFeedbackConstants.CONFIRM)
+        if (!Prefs.isPinned(app.key) && pinIndex(app.pkg) < 0) Prefs.togglePin(app.key)
+        if (modal != null) closeModalNow(restore = true)
+        if (tasks.none { it.pkg == app.pkg }) {
+            behindPkgs += app.pkg
+            suppressAdoptUntil = SystemClock.uptimeMillis() + 2500
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    act.startActivity(
+                        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(app.component)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        Sys.launchBehindOptions(Rect(geo.main)).toBundle()
+                    )
+                }
+            }
+            delay(700)
+            // Launch-behind lands in front when nothing covers it: bring the bench (and its main app) back on top.
+            val m = mainTask
+            if (m != null) uncover(m) else cover()
+        }
+        scheduleReload(0)
     }
 
     // ------------------------------------------------------------------ shelf
