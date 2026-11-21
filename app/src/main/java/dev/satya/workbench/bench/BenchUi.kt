@@ -90,6 +90,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
@@ -215,10 +219,10 @@ private fun EmptyMain(b: Bench) {
                 color = Color.White.copy(alpha = 0.65f), fontSize = 14.sp, textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(20.dp))
-            PillButton(Icons.Rounded.Search, "Search apps") { b.openModal(Modal.SEARCH) }
+            dev.satya.workbench.ui.CouiButton("Search apps", icon = Icons.Rounded.Search) { b.openModal(Modal.SEARCH) }
             if (groups.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                PillButton(Icons.Rounded.Layers, "Groups") { b.openModal(Modal.GROUPS) }
+                Spacer(Modifier.height(12.dp))
+                dev.satya.workbench.ui.CouiButton("Groups", primary = false, icon = Icons.Rounded.Layers) { b.openModal(Modal.GROUPS) }
             }
         }
     }
@@ -380,15 +384,7 @@ private fun StripHeader(b: Bench) {
 
 @Composable
 private fun RoundBtn(icon: ImageVector, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(44.dp)
-            .shadow(6.dp, CircleShape)
-            .clip(CircleShape)
-            .background(Color(0x40FFFFFF))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(21.dp)) }
+    dev.satya.workbench.ui.CouiRoundButton(icon, null, 46.dp, onClick = onClick)
 }
 
 @Composable
@@ -523,23 +519,32 @@ private fun Grip(b: Bench, modifier: Modifier) {
     Box(
         modifier
             .onGloballyPositioned { origin = it.positionInWindow() }
-            .pointerInput("tap") { detectTapGestures(onTap = { b.openSettings() }) }
+            // Drags are taken in the Initial pass, before the COUI button sees them (its press then cancels);
+            // a plain tap goes through to the button, which opens settings.
             .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { p -> b.beginRelocate(origin + p) },
-                    onDragEnd = { b.endRelocate() },
-                    onDragCancel = { b.endRelocate(cancel = true) }
-                ) { change, _ ->
-                    change.consume()
-                    b.relocPointer = origin + change.position
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    var dragging = false
+                    var moved = Offset.Zero
+                    while (true) {
+                        val ev = awaitPointerEvent(PointerEventPass.Initial)
+                        val c = ev.changes.firstOrNull { it.id == down.id }
+                        if (c == null) { if (dragging) b.endRelocate(cancel = true); break }
+                        if (!c.pressed) { if (dragging) { c.consume(); b.endRelocate() }; break }
+                        if (!dragging) {
+                            moved += c.positionChange()
+                            if (moved.getDistance() > viewConfiguration.touchSlop) {
+                                dragging = true
+                                b.beginRelocate(origin + c.position)
+                            }
+                        }
+                        if (dragging) { c.consume(); b.relocPointer = origin + c.position }
+                    }
                 }
             },
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier.size(38.dp).clip(CircleShape).background(Color(0x33FFFFFF)),
-            contentAlignment = Alignment.Center
-        ) { Icon(Icons.Rounded.Settings, "Settings (drag to move strip)", tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(20.dp)) }
+        dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.Settings, "Settings (drag to move strip)", 42.dp) { b.openSettings() }
     }
 }
 

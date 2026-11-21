@@ -42,4 +42,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
+    implementation("in.devh:coui-kit:1.2.1")
 }

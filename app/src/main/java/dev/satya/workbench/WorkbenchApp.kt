@@ -23,5 +23,6 @@ class WorkbenchApp : Application() {
             }
         }
         thread(name = "wb-apps") { Apps.refresh(this) }
+        dev.satya.workbench.ui.Kit.warm(this)
     }
 }

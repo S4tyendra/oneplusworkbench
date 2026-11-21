@@ -31,7 +31,7 @@ class WorkbenchActivity : ComponentActivity() {
         val snap = Trigger.handoff
         Trigger.handoff = null
         b.start(task, snap)
-        setContent { BenchUi(b) }
+        setContent { dev.satya.workbench.ui.ProvideCoui { BenchUi(b) } }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {

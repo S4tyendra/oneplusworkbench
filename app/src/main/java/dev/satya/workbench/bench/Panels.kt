@@ -56,6 +56,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -131,10 +135,13 @@ private fun AppCell(app: AppEntry, pinned: Boolean, badge: String? = null, onCli
     val icon = appIcon(app.pkg)
     var rect by remember { mutableStateOf(Rect()) }
     val haptic = LocalHapticFeedback.current
+    val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Column(
         Modifier
-            .clip(RoundedCornerShape(16.dp))
+            .couiPress(press)
             .combinedClickable(
+                interactionSource = press,
+                indication = null,
                 onClick = { onClick(rect) },
                 onLongClick = onLong?.let { f -> { haptic.performHapticFeedback(HapticFeedbackType.LongPress); f() } }
             )
@@ -176,6 +183,7 @@ fun SearchPanel(b: Bench) {
     val apps by Apps.all.collectAsState()
     val pins by Prefs.pinned.collectAsState()
     var q by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf(false) }
     val fr = remember { FocusRequester() }
     val grid = rememberLazyGridState()
     val results = remember(q, apps) {
@@ -193,12 +201,21 @@ fun SearchPanel(b: Bench) {
     // The most-used rows arrive after the grid is shown; the grid anchors to its first visible app, so jump back up.
     LaunchedEffect(top) { if (q.isBlank()) grid.requestScrollToItem(0) }
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().padding(horizontal = 16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 14.dp, bottom = 10.dp)) {
-            SearchField(q, { q = it }, "Search apps", Modifier.weight(1f), fr) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp, bottom = 10.dp)) {
+            dev.satya.workbench.ui.CouiSearchBar("Search apps", { q = it }, {
                 results.firstOrNull()?.let { b.openApp(it.component, it.user, null) }
+            }, Modifier.weight(1f).height(56.dp), onEditing = { editing = it })
+            // While typing, the bar's own Cancel takes this spot; the close button folds away.
+            androidx.compose.animation.AnimatedVisibility(
+                !editing,
+                enter = androidx.compose.animation.fadeIn(tween(200)) + androidx.compose.animation.expandHorizontally(tween(260)) + androidx.compose.animation.scaleIn(tween(260), 0.6f),
+                exit = androidx.compose.animation.fadeOut(tween(120)) + androidx.compose.animation.shrinkHorizontally(tween(260)) + androidx.compose.animation.scaleOut(tween(200), 0.6f)
+            ) {
+                Row {
+                    Spacer(Modifier.width(8.dp))
+                    dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.Close, "Close", 44.dp) { b.closeModal() }
+                }
             }
-            Spacer(Modifier.width(6.dp))
-            Text("Cancel", color = Color.White, fontSize = 15.sp, modifier = Modifier.clip(CircleShape).clickable { b.closeModal() }.padding(10.dp))
         }
         if (q.isBlank()) Text("Long-press an app to pin it to the strip", color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
         LazyVerticalGrid(
@@ -225,6 +242,17 @@ fun SearchPanel(b: Bench) {
     }
 }
 
+/** COUI press feedback: the pressed item sinks with a soft spring and bounces back on release (no ripple). */
+fun Modifier.couiPress(source: androidx.compose.foundation.interaction.InteractionSource, scale: Float = 0.88f): Modifier = this.then(Modifier.composed {
+    val pressed by source.collectIsPressedAsState()
+    val s by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) scale else 1f,
+        androidx.compose.animation.core.spring(dampingRatio = if (pressed) 1f else 0.55f, stiffness = if (pressed) 900f else 420f),
+        label = "press"
+    )
+    Modifier.graphicsLayer { scaleX = s; scaleY = s }
+})
+
 @Composable
 private fun GridHeader(text: String) {
     Text(text, color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 6.dp, top = 2.dp, bottom = 2.dp))
@@ -237,15 +265,13 @@ fun GroupsPanel(b: Bench) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)) {
             Text("Groups", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Box(Modifier.size(40.dp).clip(CircleShape).background(Color(0x26FFFFFF)).clickable { b.closeModal() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Close, null, tint = Color.White)
-            }
+            dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.Close, "Close", 44.dp) { b.closeModal() }
         }
         Text("Open several apps at once. The first app opens in the main window, the rest wait in the strip.", color = Dim, fontSize = 13.sp)
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PillButton(Icons.Rounded.Add, "New group") { b.switchModal(Modal.NEW_GROUP) }
-            if (b.canSaveCurrent()) PillButton(Icons.Rounded.Bookmarks, "Save open apps") { b.saveCurrentAsGroup() }
+            dev.satya.workbench.ui.CouiButton("New group", icon = Icons.Rounded.Add) { b.switchModal(Modal.NEW_GROUP) }
+            if (b.canSaveCurrent()) dev.satya.workbench.ui.CouiButton("Save open apps", primary = false, icon = Icons.Rounded.Bookmarks) { b.saveCurrentAsGroup() }
         }
         Spacer(Modifier.height(16.dp))
         if (groups.isEmpty()) {
@@ -255,22 +281,11 @@ fun GroupsPanel(b: Bench) {
             items(groups, key = { it.id }) { g -> GroupRow(g, onOpen = { b.launchGroup(g) }, onDelete = { Prefs.deleteGroup(g.id) }) }
         }
         Text("Strip position", color = Dim, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 16.dp)) {
-            for (e in Geo.EDGES) {
-                val sel = e == b.edge
-                Text(
-                    e.name.lowercase().replaceFirstChar { it.uppercase() },
-                    color = if (sel) Color.Black else Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(if (sel) Color.White else Color(0x26FFFFFF))
-                        .clickable { b.relocateTo(e) }
-                        .padding(horizontal = 16.dp, vertical = 9.dp)
-                )
-            }
-        }
+        dev.satya.workbench.ui.CouiSegments(
+            Geo.EDGES.map { e -> e.name.lowercase().replaceFirstChar { it.uppercase() } },
+            Geo.EDGES.indexOf(b.edge).coerceAtLeast(0),
+            Modifier.padding(bottom = 16.dp).width(220.dp).height(44.dp)
+        ) { i -> Geo.EDGES.getOrNull(i)?.let { b.relocateTo(it) } }
     }
 }
 
