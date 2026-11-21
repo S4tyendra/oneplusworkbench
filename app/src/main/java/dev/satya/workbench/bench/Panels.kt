@@ -310,7 +310,7 @@ fun GroupsPanel(b: Bench) {
             if (b.canSaveCurrent()) dev.satya.workbench.ui.CouiButton("Save open apps", primary = false, icon = Icons.Rounded.Bookmarks) { b.saveCurrentAsGroup() }
         }
         Spacer(Modifier.height(16.dp))
-        Suggestions(b, groups)
+        if (Prefs.suggestions.collectAsState().value) Suggestions(b, groups)
         if (groups.isEmpty()) {
             Text("No groups yet.", color = Color.White.copy(alpha = 0.45f), fontSize = 14.sp, modifier = Modifier.padding(vertical = 12.dp))
         }

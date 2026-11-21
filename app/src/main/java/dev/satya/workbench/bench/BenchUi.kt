@@ -348,7 +348,8 @@ private fun EmptyMain(b: Bench) {
             dev.satya.workbench.ui.CouiButton("Search apps", Modifier.popIn(2, step = 60), icon = Icons.Rounded.Search) { b.openModal(Modal.SEARCH) }
             // A group tied to headphones or this time of day is offered right here.
             val ctx = androidx.compose.ui.platform.LocalContext.current
-            val trig = remember(groups) { dev.satya.workbench.data.Usage.triggeredGroup(ctx, groups) }
+            val smart by Prefs.suggestions.collectAsState()
+            val trig = remember(groups, smart) { if (smart) dev.satya.workbench.data.Usage.triggeredGroup(ctx, groups) else null }
             if (trig != null) {
                 Spacer(Modifier.height(12.dp))
                 dev.satya.workbench.ui.CouiButton(
@@ -587,7 +588,8 @@ private fun TopButtons(b: Bench) {
 @Composable
 private fun BellBtn(b: Bench, size: androidx.compose.ui.unit.Dp = 46.dp) {
     val counts by dev.satya.workbench.data.Notifs.counts.collectAsState()
-    val total = counts.values.sum()
+    val badges by Prefs.badges.collectAsState()
+    val total = if (badges) counts.values.sum() else 0
     Box {
         dev.satya.workbench.ui.CouiRoundButton(Icons.Rounded.Notifications, "Notifications", size) { b.openModal(Modal.NOTIFS) }
         TotalBadge(total, Modifier.align(Alignment.TopEnd))
@@ -621,7 +623,8 @@ private fun StripHeader(b: Bench) {
 @Composable
 private fun NotifBadge(pkg: String, modifier: Modifier) {
     val counts by dev.satya.workbench.data.Notifs.counts.collectAsState()
-    val n = counts[pkg] ?: 0
+    val badges by Prefs.badges.collectAsState()
+    val n = if (badges) counts[pkg] ?: 0 else 0
     val bump = remember { Animatable(1f) }
     var last by remember { mutableStateOf(n) }
     LaunchedEffect(n) {

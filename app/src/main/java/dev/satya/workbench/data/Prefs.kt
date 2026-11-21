@@ -27,6 +27,11 @@ object Prefs {
     val handleTransparency = MutableStateFlow(0f)
     val pinned = MutableStateFlow<List<String>>(emptyList())
     val groups = MutableStateFlow<List<AppGroup>>(emptyList())
+    val haptics = MutableStateFlow(true)
+    /** Unread counts on strip cards and the bell. */
+    val badges = MutableStateFlow(true)
+    /** Learned app pairs and time / headphone group suggestions on the empty bench and in Groups. */
+    val suggestions = MutableStateFlow(true)
 
     fun init(ctx: Context) {
         sp = ctx.getSharedPreferences("workbench", Context.MODE_PRIVATE)
@@ -39,6 +44,9 @@ object Prefs {
         handleTransparency.value = sp.getFloat("handleTransparency", 0f)
         pinned.value = sp.getString("pinned", "")!!.split('|').filter { it.isNotBlank() }
         groups.value = parseGroups(sp.getString("groups", "[]")!!)
+        haptics.value = sp.getBoolean("haptics", true)
+        badges.value = sp.getBoolean("badges", true)
+        suggestions.value = sp.getBoolean("suggestions", true)
     }
 
     /** Per-app content zoom in the main window (1 = laid out exactly as full screen). */
@@ -48,6 +56,18 @@ object Prefs {
     fun splitRatio(top: String?, bottom: String?): Float? =
         if (top == null || bottom == null) null else sp.getFloat("split:$top|$bottom", -1f).takeIf { it > 0f }
     fun setSplitRatio(top: String, bottom: String, r: Float) { sp.edit().putFloat("split:$top|$bottom", r).apply() }
+
+    fun setHaptics(on: Boolean) { haptics.value = on; sp.edit().putBoolean("haptics", on).apply() }
+    fun setBadges(on: Boolean) { badges.value = on; sp.edit().putBoolean("badges", on).apply() }
+    fun setSuggestions(on: Boolean) { suggestions.value = on; sp.edit().putBoolean("suggestions", on).apply() }
+
+    /** Apps with their own zoom, and app pairs with a remembered divider. */
+    fun windowMemory(): Pair<Int, Int> = sp.all.keys.let { k -> k.count { it.startsWith("zoom:") } to k.count { it.startsWith("split:") } }
+    fun resetWindowMemory() {
+        val e = sp.edit()
+        for (k in sp.all.keys) if (k.startsWith("zoom:") || k.startsWith("split:")) e.remove(k)
+        e.apply()
+    }
 
     fun setEdge(e: Edge) { if (e != Edge.LEFT && e != Edge.TOP) return; edge.value = e; sp.edit().putString("edge", e.name).apply() }
     fun setHandleSide(e: Edge) { handleSide.value = e; sp.edit().putString("handleSide", e.name).apply() }

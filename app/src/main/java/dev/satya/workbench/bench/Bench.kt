@@ -218,6 +218,7 @@ class Bench(private val act: WorkbenchActivity) {
 
     /** Haptic feedback through the window (the OnePlus linear motor plays the system effects). */
     fun buzz(kind: Int) {
+        if (!Prefs.haptics.value) return
         act.window?.decorView?.performHapticFeedback(kind)
     }
 

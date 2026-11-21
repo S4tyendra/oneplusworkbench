@@ -1,266 +1,258 @@
 package dev.satya.workbench.ui
 
+import android.app.Activity
 import android.content.ComponentName
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import dev.satya.workbench.bench.Geo
 import dev.satya.workbench.bench.Trigger
 import dev.satya.workbench.data.Edge
+import dev.satya.workbench.data.Notifs
 import dev.satya.workbench.data.Prefs
+import dev.satya.workbench.data.Shelf
+import dev.satya.workbench.data.Usage
 import dev.satya.workbench.service.EdgeService
 import dev.satya.workbench.sys.Root
 import dev.satya.workbench.sys.Sys
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import `in`.devh.coui.Coui
+import kotlin.concurrent.thread
+import kotlin.math.roundToInt
 
-class SettingsActivity : ComponentActivity() {
+/** Settings as a native ColorOS page: COUI toolbar with large title, card groups, switches, sliders and dialogs. */
+class SettingsActivity : Activity() {
+    private lateinit var coui: Coui
+    /** Rebuilt on every resume: the status card, and the rows whose numbers change outside this screen. */
+    private lateinit var statusHost: FrameLayout
+    private lateinit var dataHost: FrameLayout
+    private val launcherCn by lazy { ComponentName(this, "dev.satya.workbench.Launcher") }
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        setContent { SettingsScreen() }
-    }
-}
-
-private val Card = Color(0xFF181A20)
-private val Accent = Color(0xFF7FA6FF)
-
-private data class Status(val hook: Boolean, val freeform: Boolean, val a11y: Boolean)
-
-@Composable
-private fun SettingsScreen() {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val edge by Prefs.edge.collectAsState()
-    val hSide by Prefs.handleSide.collectAsState()
-    val hY by Prefs.handleY.collectAsState()
-    val transp by Prefs.transparency.collectAsState()
-    val hTransp by Prefs.handleTransparency.collectAsState()
-    val launcherCn = remember { ComponentName(ctx, "dev.satya.workbench.Launcher") }
-    var inDrawer by remember {
-        mutableStateOf(ctx.packageManager.getComponentEnabledSetting(launcherCn) != android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED)
-    }
-    val hOn by Prefs.handleEnabled.collectAsState()
-    var status by remember { mutableStateOf<Status?>(null) }
-    var fixLog by remember { mutableStateOf("") }
-    var tick by remember { mutableIntStateOf(0) }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-
-    suspend fun refresh() {
-        status = withContext(Dispatchers.IO) {
-            val cr = ctx.contentResolver
-            val ff = Settings.Global.getInt(cr, "enable_freeform_support", 0) == 1
-            val a11y = EdgeService.running
-            Status(Sys.privileged(ctx), ff, a11y)
-        }
-    }
-    LaunchedEffect(tick) { lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { refresh() } }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Color(0xFF0E0F13))
-            .verticalScroll(rememberScrollState())
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 18.dp)
-    ) {
-        Spacer(Modifier.height(18.dp))
-        Text("Workbench", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
-        Text("Floating app stack for any screen edge.", color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
-        Spacer(Modifier.height(20.dp))
-
-        Box(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Accent)
-                .clickable { Trigger.enter(ctx) }.padding(vertical = 16.dp),
-            contentAlignment = Alignment.Center
-        ) { Text("Open Workbench", color = Color(0xFF0E1630), fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
-
-        Section("Status") {
-            val s = status
-            StatusRow("System hook (Vector)", s?.hook, "Enable the Workbench module for System Framework, then reboot")
-            StatusRow("Freeform windows", s?.freeform, "Needs enable_freeform_support")
-            StatusRow("Edge handle service", s?.a11y, "Accessibility service")
-            if (s != null && !(s.freeform && s.a11y)) {
-                Spacer(Modifier.height(8.dp))
-                Box(
-                    Modifier.clip(CircleShape).background(Color(0x26FFFFFF)).clickable {
-                        scope.launch {
-                            fixLog = "Working..."
-                            val svc = ComponentName(ctx, EdgeService::class.java).flattenToString()
-                            val r = withContext(Dispatchers.IO) {
-                                val cur = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
-                                val list = (cur.split(':').filter { it.isNotBlank() && it != svc } + svc).joinToString(":")
-                                Root.run(
-                                    "settings put global enable_freeform_support 1",
-                                    "settings put global force_resizable_activities 1",
-                                    "settings put secure enabled_accessibility_services '" + list + "'",
-                                    "settings put secure accessibility_enabled 1"
-                                )
-                            }
-                            fixLog = if (r.code == 0) "Done." else "Root command failed: " + r.out.take(200)
-                            tick++
-                        }
-                    }.padding(horizontal = 18.dp, vertical = 10.dp)
-                ) { Text("Fix with root", color = Color.White, fontSize = 14.sp) }
-                if (fixLog.isNotEmpty()) Text(fixLog, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
-            }
-        }
-
-        Section("Strip position") {
-            val edges = dev.satya.workbench.bench.Geo.EDGES
-            Segmented(edges.map { it.name.lowercase().replaceFirstChar { c -> c.uppercase() } }, edges.indexOf(edge).coerceAtLeast(0)) {
-                Prefs.setEdge(edges[it])
-            }
-            Text("You can also drag the settings button at the end of the strip to the other edge.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
-        }
-
-        Section("Background") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Transparency", color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                Text("${(transp * 100).toInt()}%", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
-            }
-            Slider(
-                value = transp, onValueChange = { Prefs.setTransparency(it) },
-                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent)
-            )
-            Text("How much of the wallpaper shows through behind the strip and the main window. 0% is a dark, blurred background; 100% shows the wallpaper as it is.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
-        }
-
-        Section("App drawer") {
-            ToggleRow("Show in app drawer", inDrawer) { on ->
-                ctx.packageManager.setComponentEnabledSetting(
-                    launcherCn,
-                    if (on) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                    android.content.pm.PackageManager.DONT_KILL_APP
-                )
-                inDrawer = on
-            }
-            Text("When hidden, open these settings from the gear in Workbench, by long-pressing the Workbench Quick Settings tile, or from the module's settings in Vector.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
-        }
-
-        Section("Edge handle") {
-            ToggleRow("Show handle", hOn) { Prefs.setHandleEnabled(it) }
-            Spacer(Modifier.height(10.dp))
-            Segmented(listOf("Left edge", "Right edge"), if (hSide == Edge.LEFT) 0 else 1) {
-                Prefs.setHandleSide(if (it == 0) Edge.LEFT else Edge.RIGHT)
-            }
-            Spacer(Modifier.height(10.dp))
-            Text("Vertical position", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-            Slider(
-                value = hY, onValueChange = { Prefs.setHandleY(it) },
-                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent)
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Handle transparency", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Text("${(hTransp * 100).toInt()}%", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
-            }
-            Slider(
-                value = hTransp, onValueChange = { Prefs.setHandleTransparency(it) },
-                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent)
-            )
-            Text("Swipe inward from the handle to open Workbench. The Quick Settings tile works too.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
-        }
-
-        Spacer(Modifier.height(32.dp))
-    }
-}
-
-@Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
-    Spacer(Modifier.height(22.dp))
-    Text(title, color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 6.dp, bottom = 8.dp))
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Card).padding(16.dp)) { content() }
-}
-
-@Composable
-private fun StatusRow(label: String, ok: Boolean?, hint: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
-        Icon(
-            if (ok == true) Icons.Rounded.CheckCircle else Icons.Rounded.ErrorOutline, null,
-            tint = when (ok) { true -> Color(0xFF5FD08A); false -> Color(0xFFFF8A65); null -> Color.Gray },
-            modifier = Modifier.size(22.dp)
+        coui = Coui(this)
+        // Tagged like the kit's own cards, so the page column doesn't add a second margin around them.
+        val card = coui.group().tag
+        statusHost = FrameLayout(this).apply { tag = card }
+        dataHost = FrameLayout(this).apply { tag = card }
+        val page = coui.column(
+            coui.button("Open Workbench") { Trigger.enter(this) },
+            header("Status"), statusHost,
+            header("Strip"), strip(),
+            header("Background"), background(),
+            header("Edge handle"), handle(),
+            header("Workbench"), features(),
+            header("Shelf, windows and learning"), dataHost,
+            header("App drawer"), drawer(), drawerNote(),
+            about(),
         )
-        Spacer(Modifier.width(12.dp))
-        Column {
-            Text(label, color = Color.White, fontSize = 15.sp)
-            if (ok == false) Text(hint, color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+        coui.show(this, coui.screen("Workbench", page, largeTitle = true))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshStatus()
+        refreshData()
+    }
+
+    // ------------------------------------------------------------------ sections
+
+    private data class Status(val hook: Boolean, val freeform: Boolean, val a11y: Boolean, val notifs: Boolean)
+
+    private fun refreshStatus() {
+        thread(name = "wb-settings-status") {
+            val cr = contentResolver
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            val s = Status(
+                Sys.privileged(this),
+                Settings.Global.getInt(cr, "enable_freeform_support", 0) == 1,
+                EdgeService.running,
+                nm.isNotificationListenerAccessGranted(Notifs.component(this)),
+            )
+            runOnUiThread { if (!isDestroyed) showStatus(s) }
         }
     }
-}
 
-@Composable
-private fun ToggleRow(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onChange(!value) }) {
-        Text(label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
-        Switch(value, onChange, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
+    private fun showStatus(s: Status) {
+        fun state(ok: Boolean, fix: String) = if (ok) "Working" else fix
+        val rows = mutableListOf(
+            coui.row("System hook", state(s.hook, "Enable the Workbench module for System Framework in Vector, then reboot")),
+            coui.row("Freeform windows", state(s.freeform, "Off: Workbench can't float apps")),
+            coui.row("Edge handle service", state(s.a11y, "Accessibility service is off")),
+            coui.row("Notification access", state(s.notifs, "Needed for badges and the notifications panel")),
+        )
+        if (!(s.freeform && s.a11y && s.notifs)) rows += coui.row("Fix with root", "Turns on freeform windows, the edge handle and notification access") { fixWithRoot() }
+        statusHost.removeAllViews()
+        statusHost.addView(coui.group(*rows.toTypedArray()))
     }
-}
 
-@Composable
-private fun Segmented(items: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(CircleShape).background(Color(0x14FFFFFF)).padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        items.forEachIndexed { i, s ->
-            val sel = i == selected
-            Box(
-                Modifier.weight(1f).clip(CircleShape).background(if (sel) Color.White else Color.Transparent)
-                    .clickable { onSelect(i) }.padding(vertical = 9.dp),
-                contentAlignment = Alignment.Center
-            ) { Text(s, color = if (sel) Color.Black else Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+    private fun fixWithRoot() {
+        thread(name = "wb-settings-fix") {
+            val svc = ComponentName(this, EdgeService::class.java).flattenToString()
+            val cur = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+            val list = (cur.split(':').filter { it.isNotBlank() && it != svc } + svc).joinToString(":")
+            val r = Root.run(
+                "settings put global enable_freeform_support 1",
+                "settings put global force_resizable_activities 1",
+                "settings put secure enabled_accessibility_services '" + list + "'",
+                "settings put secure accessibility_enabled 1",
+                "cmd notification allow_listener " + Notifs.component(this).flattenToString(),
+            )
+            runOnUiThread {
+                if (r.code != 0) coui.dialog("Root command failed", r.out.take(300)).show()
+                refreshStatus()
+            }
         }
     }
+
+    private fun strip(): View {
+        val edges = Geo.EDGES
+        val seg = coui.segments(edges.map { it.name.lowercase().replaceFirstChar { c -> c.uppercase() } }, edges.indexOf(Prefs.edge.value).coerceAtLeast(0), 44f) {
+            Prefs.setEdge(edges[it])
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(seg, LinearLayout.LayoutParams(-1, dp(44)))
+            addView(note("You can also drag the settings button at the end of the strip to the other edge."))
+        }
+    }
+
+    private fun background(): View = coui.group(
+        sliderRow("Transparency", Prefs.transparency.value, { "$it% · how much wallpaper shows through" }) { Prefs.setTransparency(it / 100f) },
+    )
+
+    private fun handle(): View {
+        val side = arrayOf("Left edge", "Right edge")
+        lateinit var sideRow: View
+        sideRow = coui.row("Side", side[if (Prefs.handleSide.value == Edge.LEFT) 0 else 1]) {
+            coui.choiceDialog("Handle side", side.toList(), if (Prefs.handleSide.value == Edge.LEFT) 0 else 1) { i ->
+                Prefs.setHandleSide(if (i == 0) Edge.LEFT else Edge.RIGHT)
+                sideRow.summary(side[i])
+            }.show()
+        }
+        return coui.group(
+            coui.row("Show handle", "Swipe inward from it to open Workbench. The Quick Settings tile works too.", coui.switch(Prefs.handleEnabled.value) { Prefs.setHandleEnabled(it) }),
+            sideRow,
+            sliderRow("Height on screen", Prefs.handleY.value, null) { Prefs.setHandleY(it / 100f) },
+            sliderRow("Handle transparency", Prefs.handleTransparency.value, { "$it%" }) { Prefs.setHandleTransparency(it / 100f) },
+        )
+    }
+
+    private fun features(): View = coui.group(
+        coui.row("Haptics", "Taps, docking, switching and drop targets", coui.switch(Prefs.haptics.value) { Prefs.setHaptics(it) }),
+        coui.row("Notification badges", "Unread counts on cards and the bell", coui.switch(Prefs.badges.value) { Prefs.setBadges(it) }),
+        coui.row("Smart suggestions", "Apps you use together, and groups that open by time of day or with headphones", coui.switch(Prefs.suggestions.value) { Prefs.setSuggestions(it) }),
+    )
+
+    private fun refreshData() {
+        val shelf = Shelf.items.value
+        val (zooms, splits) = Prefs.windowMemory()
+        val learned = Usage.learnedCount()
+        val rows = listOf(
+            coui.row("Shelf", if (shelf.isEmpty()) "Empty" else plural(shelf.size, "item") + " kept") {
+                if (shelf.isEmpty()) return@row
+                coui.listDialog("Shelf", listOf("Send all to FileDock", "Clear the shelf")) { i ->
+                    if (i == 0) Shelf.toFileDock(this, Shelf.items.value)
+                    else confirm("Clear the shelf?", "Removes " + plural(Shelf.items.value.size, "item") + ". Copies already sent to FileDock or other apps stay there.") { Shelf.clear() }
+                }.show()
+            },
+            coui.row(
+                "Window sizes",
+                if (zooms + splits == 0) "Every app at its normal size"
+                else listOfNotNull(zooms.takeIf { it > 0 }?.let { plural(it, "app") + " zoomed" }, splits.takeIf { it > 0 }?.let { plural(it, "split pair") + " remembered" }).joinToString(" · ")
+            ) {
+                if (zooms + splits > 0) confirm("Reset window sizes?", "Apps go back to their normal zoom and split windows to half and half.") { Prefs.resetWindowMemory() }
+            },
+            coui.row("What Workbench learned", if (learned == 0) "Nothing yet" else "Usage of " + plural(learned, "app") + ", kept on this phone") {
+                if (learned > 0) confirm("Forget what Workbench learned?", "Suggestions start from scratch. Your saved groups stay.") { Usage.reset() }
+            },
+        )
+        dataHost.removeAllViews()
+        dataHost.addView(coui.group(*rows.toTypedArray()))
+    }
+
+    private fun drawer(): View {
+        val on = packageManager.getComponentEnabledSetting(launcherCn) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        return coui.group(coui.row("Show in app drawer", null, coui.switch(on) { v ->
+            packageManager.setComponentEnabledSetting(
+                launcherCn,
+                if (v) PackageManager.COMPONENT_ENABLED_STATE_DEFAULT else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+        }))
+    }
+
+    private fun drawerNote(): View =
+        note("When hidden, open these settings from the gear in Workbench, by long-pressing the Workbench Quick Settings tile, or from the module's settings in Vector.")
+
+    private fun about(): View {
+        val v = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: ""
+        return coui.text("Workbench $v", secondary = true).apply {
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+            textSize = 12f
+        }
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    private fun confirm(title: String, message: String, onYes: () -> Unit) {
+        coui.dialog(title, message, "OK", "Cancel", onPositive = {
+            onYes()
+            refreshData()
+        }).show()
+    }
+
+    private fun header(t: String): View = coui.text(t, secondary = true).apply {
+        textSize = 14f
+        setPadding(dp(8), dp(10), 0, 0)
+    }
+
+    private fun note(t: String): View = coui.text(t, secondary = true).apply {
+        textSize = 12f
+        setPadding(dp(8), dp(8), dp(8), 0)
+    }
+
+    /**
+     * A card row holding a title, an optional value line and a COUI slider. It is a kit row with its
+     * contents swapped, so it keeps COUI's card background, corners and press state for its place in the group.
+     * [summary] (when given) shows the value and follows the thumb.
+     */
+    private fun sliderRow(title: String, value: Float, summary: ((Int) -> String)?, onChange: (Int) -> Unit): View {
+        val start = (value * 100).roundToInt()
+        val row = coui.row(title) as ViewGroup
+        val titleView = row.findViewById<TextView>(android.R.id.title)
+        val sub = coui.text(summary?.invoke(start) ?: "", secondary = true).apply {
+            textSize = 13f
+            visibility = if (summary == null) View.GONE else View.VISIBLE
+        }
+        val label = coui.text(title).apply {
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, titleView.textSize)
+            typeface = titleView.typeface
+        }
+        val slider = coui.slider(start, 100, 0, onChange = { v ->
+            summary?.let { sub.text = it(v) }
+            onChange(v)
+        })
+        row.removeAllViews()
+        row.isClickable = false
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(14), 0, dp(10))
+            addView(label, LinearLayout.LayoutParams(-1, -2))
+            addView(sub, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+            addView(slider, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return row
+    }
+
+    private fun View.summary(s: CharSequence?) {
+        findViewById<TextView>(android.R.id.summary)?.apply { text = s; visibility = if (s == null) View.GONE else View.VISIBLE }
+    }
+
+    private fun plural(n: Int, w: String) = "$n " + if (n == 1) w else w + "s"
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
 }

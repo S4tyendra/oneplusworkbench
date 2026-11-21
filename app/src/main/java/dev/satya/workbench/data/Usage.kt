@@ -28,6 +28,17 @@ object Usage {
         }
     }
 
+    /** Learned apps (hours, pairs) count, for settings. */
+    @Synchronized fun learnedCount(): Int = hours.size
+
+    @Synchronized fun reset() {
+        hours.clear()
+        pairs.clear()
+        sessionPkgs.clear()
+        sp.edit().clear().apply()
+        version.value++
+    }
+
     @Synchronized fun used(pkg: String) {
         val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         hours.getOrPut(pkg) { IntArray(24) }[h]++
