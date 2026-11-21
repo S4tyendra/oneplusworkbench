@@ -1,0 +1,15 @@
+# Build output
+build/
+app/build/
+hidden/build/
+.gradle/
+.kotlin/
+*.apk
+*.aab
+
+# Local / IDE
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.REAL_GET_TASKS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.MANAGE_ACTIVITY_TASKS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.READ_FRAME_BUFFER" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.START_TASKS_FROM_RECENTS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.REMOVE_TASKS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+
+    <application
+        android:name=".WorkbenchApp"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Workbench"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Settings">
+
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="Workbench: grants task-management access to the Workbench app" />
+        <meta-data android:name="xposedminversion" android:value="93" />
+        <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
+
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Settings">
+            <!-- Long-press on the Quick Settings tile, and the module's settings in the Xposed manager. -->
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+        </activity>
+
+        <!-- App drawer entry; Settings > "Show in app drawer" disables this alias. -->
+        <activity-alias
+            android:name=".Launcher"
+            android:exported="true"
+            android:targetActivity=".ui.SettingsActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity
+            android:name=".bench.WorkbenchActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboard|keyboardHidden|navigation|uiMode|fontScale"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:screenOrientation="portrait"
+            android:taskAffinity="dev.satya.workbench.bench"
+            android:theme="@style/Theme.Workbench"
+            android:windowSoftInputMode="adjustResize" />
+
+        <service
+            android:name=".service.EdgeService"
+            android:exported="false"
+            android:label="Workbench edge handle"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/edge_service" />
+        </service>
+
+        <service
+            android:name=".service.WorkbenchTile"
+            android:exported="true"
+            android:icon="@drawable/ic_tile"
+            android:label="Workbench"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
