@@ -18,7 +18,9 @@ android {
     }
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Same key as the debug builds from this machine, so a release installs over them and later updates install over it.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -28,6 +30,10 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    lint {
+        // Hidden framework APIs are the point of this app (reached through HiddenApiBypass and the system hook).
+        disable += "BlockedPrivateApi"
     }
 }
 
