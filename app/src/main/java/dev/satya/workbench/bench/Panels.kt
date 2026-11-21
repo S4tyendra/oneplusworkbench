@@ -288,12 +288,16 @@ fun GroupsPanel(b: Bench) {
             if (b.canSaveCurrent()) dev.satya.workbench.ui.CouiButton("Save open apps", primary = false, icon = Icons.Rounded.Bookmarks) { b.saveCurrentAsGroup() }
         }
         Spacer(Modifier.height(16.dp))
+        Suggestions(b, groups)
         if (groups.isEmpty()) {
             Text("No groups yet.", color = Color.White.copy(alpha = 0.45f), fontSize = 14.sp, modifier = Modifier.padding(vertical = 12.dp))
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
             itemsIndexed(groups, key = { _, it -> it.id }) { i, g ->
-                Box(Modifier.animateItem().popIn(3 + i)) { GroupRow(g, onOpen = { b.launchGroup(g) }, onDelete = { Prefs.deleteGroup(g.id) }) }
+                Box(Modifier.animateItem().popIn(3 + i)) { GroupRow(g, onOpen = { b.launchGroup(g) }, onDelete = { Prefs.deleteGroup(g.id) }, onTrigger = {
+                    b.buzz(android.view.HapticFeedbackConstants.SEGMENT_TICK)
+                    Prefs.saveGroupInPlace(g.copy(trigger = dev.satya.workbench.data.Usage.nextTrigger(g.trigger)))
+                }) }
             }
         }
         Text("Strip position", color = Dim, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
@@ -306,7 +310,7 @@ fun GroupsPanel(b: Bench) {
 }
 
 @Composable
-private fun GroupRow(g: AppGroup, onOpen: () -> Unit, onDelete: () -> Unit) {
+private fun GroupRow(g: AppGroup, onOpen: () -> Unit, onDelete: () -> Unit, onTrigger: () -> Unit = {}) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -330,7 +334,15 @@ private fun GroupRow(g: AppGroup, onOpen: () -> Unit, onDelete: () -> Unit) {
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(g.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("" + g.apps.size + " apps", color = Dim, fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("" + g.apps.size + " apps  ·  ", color = Dim, fontSize = 12.sp)
+                // Tap to cycle: none → headphones → morning → afternoon → evening → night.
+                Text(
+                    dev.satya.workbench.data.Usage.triggerLabel(g.trigger),
+                    color = if (g.trigger.isEmpty()) Dim else Color(0xFF9BD39B), fontSize = 12.sp,
+                    modifier = Modifier.clip(CircleShape).clickable(onClick = onTrigger).background(Color(0x14FFFFFF)).padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+            }
         }
         Box(Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onDelete), contentAlignment = Alignment.Center) {
             Icon(Icons.Rounded.DeleteOutline, "Delete", tint = Dim)
@@ -395,6 +407,59 @@ fun NewGroupPanel(b: Bench) {
             items(results, key = { it.key + "#" + it.user.hashCode() }) { app ->
                 val idx = sel.indexOf(app.key)
                 AppCell(app, false, badge = if (idx >= 0) "" + (idx + 1) else null, onClick = { if (!sel.remove(app.key)) sel.add(app.key) }, onLong = null)
+            }
+        }
+    }
+}
+
+
+/** Learned sets: apps you keep opening together, and what you usually open at this hour. */
+@Composable
+private fun Suggestions(b: Bench, groups: List<AppGroup>) {
+    val ver by dev.satya.workbench.data.Usage.version.collectAsState()
+    val saved = remember(groups) { groups.map { g -> g.apps.mapNotNull { ComponentName.unflattenFromString(it)?.packageName }.toSet() } }
+    val installed by Apps.all.collectAsState()
+    val have = remember(installed) { installed.map { it.pkg }.toSet() }
+    val sugg = remember(ver, saved, have) {
+        val out = ArrayList<Pair<List<String>, String>>()
+        for ((p, n) in dev.satya.workbench.data.Usage.topPairs()) {
+            if (p.all { it in have } && saved.none { it.containsAll(p) }) out += p to "Used together " + n + " times"
+        }
+        val now = dev.satya.workbench.data.Usage.forNow(3).filter { it in have }
+        if (now.size >= 2 && saved.none { it.containsAll(now) } && out.none { it.first.toSet() == now.toSet() })
+            out += now to "Usually open in the " + dev.satya.workbench.data.Usage.slotNow()
+        out.take(3)
+    }
+    if (sugg.isEmpty()) return
+    Text("Suggested", color = Dim, fontSize = 13.sp, modifier = Modifier.popIn(2).padding(bottom = 8.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 16.dp)) {
+        sugg.forEachIndexed { i, (pkgs, why) ->
+            Row(
+                Modifier.popIn(3 + i).fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                    .border(1.dp, Color(0x339BD39B), RoundedCornerShape(20.dp))
+                    .background(Color(0x0F9BD39B))
+                    .clickable { b.launchApps(pkgs) }.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.width((40 + 22 * (pkgs.size.coerceAtMost(4) - 1)).dp).height(40.dp)) {
+                    pkgs.take(4).forEachIndexed { j, p ->
+                        val ic = appIcon(p)
+                        Box(
+                            Modifier.offset((22 * j).dp, 0.dp).size(40.dp).clip(CircleShape).background(Color(0xFF22252D))
+                                .border(2.dp, Color(0xFF15171C), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) { if (ic != null) Image(ic, null, Modifier.size(32.dp)) }
+                    }
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    Text(pkgs.joinToString(" + ") { Apps.label(ctx, it) }, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(why, color = Color(0xFF9BD39B), fontSize = 12.sp)
+                }
+                Box(Modifier.size(36.dp).clip(CircleShape).clickable { b.saveSuggestion(pkgs) }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Bookmarks, "Save as group", tint = Color.White.copy(alpha = 0.8f))
+                }
             }
         }
     }

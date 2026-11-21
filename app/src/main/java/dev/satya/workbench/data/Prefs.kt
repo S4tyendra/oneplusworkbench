@@ -11,7 +11,7 @@ enum class Edge {
     val vertical: Boolean get() = this == LEFT || this == RIGHT
 }
 
-data class AppGroup(val id: String, val name: String, val apps: List<String>)
+data class AppGroup(val id: String, val name: String, val apps: List<String>, val trigger: String = "")
 
 object Prefs {
     private lateinit var sp: SharedPreferences
@@ -61,11 +61,13 @@ object Prefs {
         val l = groups.value.filter { it.id != g.id } + g
         setGroups(l)
     }
+    /** Update a group without moving it to the end of the list. */
+    fun saveGroupInPlace(g: AppGroup) = setGroups(groups.value.map { if (it.id == g.id) g else it })
     fun deleteGroup(id: String) = setGroups(groups.value.filter { it.id != id })
     private fun setGroups(l: List<AppGroup>) {
         groups.value = l
         val arr = JSONArray()
-        for (g in l) arr.put(JSONObject().put("id", g.id).put("name", g.name).put("apps", JSONArray(g.apps)))
+        for (g in l) arr.put(JSONObject().put("id", g.id).put("name", g.name).put("apps", JSONArray(g.apps)).put("trigger", g.trigger))
         sp.edit().putString("groups", arr.toString()).apply()
     }
     private fun parseGroups(s: String): List<AppGroup> = runCatching {
@@ -73,7 +75,7 @@ object Prefs {
         (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
             val a = o.getJSONArray("apps")
-            AppGroup(o.getString("id"), o.getString("name"), (0 until a.length()).map { a.getString(it) })
+            AppGroup(o.getString("id"), o.getString("name"), (0 until a.length()).map { a.getString(it) }, o.optString("trigger", ""))
         }
     }.getOrDefault(emptyList())
 

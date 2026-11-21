@@ -368,6 +368,11 @@ class Bench(private val act: WorkbenchActivity) {
         scope.launch(Dispatchers.IO) { Apps.refresh(act) }
         scope.launch { reloadNow() }
         scope.launch {
+            androidx.compose.runtime.snapshotFlow { mainTask to mainPkg }.collect { (t, p) ->
+                if (t != null && p != null) withContext(Dispatchers.IO) { dev.satya.workbench.data.Usage.used(p) }
+            }
+        }
+        scope.launch {
             var prev = dev.satya.workbench.data.Notifs.counts.value
             dev.satya.workbench.data.Notifs.counts.collect { now ->
                 val grew = now.filter { (p, c) -> c > (prev[p] ?: 0) }.keys
@@ -417,6 +422,7 @@ class Bench(private val act: WorkbenchActivity) {
     }
 
     fun dispose() {
+        thread { dev.satya.workbench.data.Usage.endSession() }
         scope.cancel()
         Sys.unregister(listener)
         if (active === this) active = null
@@ -1010,6 +1016,16 @@ class Bench(private val act: WorkbenchActivity) {
         val name = keys.take(2).joinToString(" + ") { Apps.label(act, ComponentName.unflattenFromString(it)!!.packageName) }
         Prefs.saveGroup(AppGroup("g" + System.currentTimeMillis(), if (keys.size > 2) "$name +" + (keys.size - 2) else name.ifBlank { "Group $n" }, keys))
     }
+
+    /** Save a suggested set of apps as a group. */
+    fun saveSuggestion(pkgs: List<String>) {
+        val keys = pkgs.map { pinKeyFor(it, null) }
+        val name = pkgs.take(2).joinToString(" + ") { Apps.label(act, it) } + if (pkgs.size > 2) " +" + (pkgs.size - 2) else ""
+        buzz(android.view.HapticFeedbackConstants.CONFIRM)
+        Prefs.saveGroup(AppGroup("g" + System.currentTimeMillis(), name, keys))
+    }
+
+    fun launchApps(pkgs: List<String>) = launchGroup(AppGroup("tmp", "", pkgs.map { pinKeyFor(it, null) }))
 
     fun launchGroup(g: AppGroup) = op {
         if (modal != null) closeModalNow(restore = false)

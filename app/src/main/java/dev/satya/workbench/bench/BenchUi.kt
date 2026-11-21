@@ -1,5 +1,7 @@
 package dev.satya.workbench.bench
 
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.foundation.layout.defaultMinSize
@@ -224,7 +226,17 @@ private fun EmptyMain(b: Bench) {
             )
             Spacer(Modifier.height(20.dp))
             dev.satya.workbench.ui.CouiButton("Search apps", Modifier.popIn(2, step = 60), icon = Icons.Rounded.Search) { b.openModal(Modal.SEARCH) }
-            if (groups.isNotEmpty()) {
+            // A group tied to headphones or this time of day is offered right here.
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val trig = remember(groups) { dev.satya.workbench.data.Usage.triggeredGroup(ctx, groups) }
+            if (trig != null) {
+                Spacer(Modifier.height(12.dp))
+                dev.satya.workbench.ui.CouiButton(
+                    "Open " + trig.name, Modifier.popIn(3, step = 60), primary = false,
+                    icon = if (trig.trigger == dev.satya.workbench.data.Usage.T_HEADPHONES) Icons.Rounded.Headphones else Icons.Rounded.Schedule
+                ) { b.launchGroup(trig) }
+            }
+            if (groups.isNotEmpty() && trig == null) {
                 Spacer(Modifier.height(12.dp))
                 dev.satya.workbench.ui.CouiButton("Groups", primary = false, icon = Icons.Rounded.Layers) { b.openModal(Modal.GROUPS) }
             }
