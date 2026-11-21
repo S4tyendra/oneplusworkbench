@@ -95,6 +95,10 @@ class Bench(private val act: WorkbenchActivity) {
         private const val TAG = "Workbench"
         private val EaseOut = CubicBezierEasing(0.2f, 0f, 0f, 1f)
         const val MAIN_RADIUS_DP = 26
+        /** Space between the two panes of a split main window (holds the divider). */
+        const val SPLIT_GAP_DP = 18
+        /** Smallest pane share while dragging the divider; past it (and a little more) the pane closes. */
+        const val SPLIT_MIN = 0.22f
     }
 
     // AndroidUiDispatcher.Main carries a Choreographer-backed MonotonicFrameClock, which Animatable needs.
@@ -127,8 +131,38 @@ class Bench(private val act: WorkbenchActivity) {
     var appDrag by mutableStateOf<dev.satya.workbench.data.AppEntry?>(null); private set
     var appDragPos by mutableStateOf(Offset.Zero); private set
 
-    enum class DropTarget { MAIN, STRIP }
+    // ------------------------------------------------------------------ split main window
+    /** Lower pane of a split main window ([mainTask] is the upper one). */
+    var splitTask by mutableStateOf<Int?>(null); private set
+    var splitPkg by mutableStateOf<String?>(null); private set
+    var splitImage by mutableStateOf<ImageBitmap?>(null); private set
+    /** App launched into the lower pane that has not shown up yet. */
+    var pendingSplitPkg by mutableStateOf<String?>(null); private set
+    private var pendingSplitSince = 0L
+    /** Upper pane's share of the main area. */
+    var splitRatio by mutableStateOf(0.5f); private set
+    /** Search was opened to pick the app for the lower pane. */
+    var splitPick by mutableStateOf(false); private set
+    val isSplit: Boolean get() = splitTask != null || pendingSplitPkg != null
+
+    /** Upper and lower pane at [ratio]. Same width as the main window, so the apps keep the main window's density. */
+    fun splitRects(ratio: Float = splitRatio): Pair<Rect, Rect> {
+        val m = geo.main
+        val gap = geo.dp(SPLIT_GAP_DP)
+        val cut = m.top + ((m.height() - gap) * ratio).roundToInt()
+        return Rect(m.left, m.top, m.right, cut) to Rect(m.left, cut + gap, m.right, m.bottom)
+    }
+
+    /** Where the main app is on screen right now (the upper pane when split). */
+    val mainShown: Rect get() = if (isSplit) splitRects().first else geo.main
+    /** [mainShown] as it was when the bench last covered the apps: where outgoing flyers start. */
+    private var lastShown = Rect()
+
+    enum class DropTarget { MAIN, SPLIT, STRIP }
+    /** The part of an occupied main window that splits it when an app is dropped there. */
+    fun splitZone(): Rect = Rect(geo.main).apply { top = geo.main.top + (geo.main.height() * 0.58f).roundToInt() }
     fun dropTargetAt(p: Offset): DropTarget? = when {
+        mainTask != null && splitZone().contains(p.x.toInt(), p.y.toInt()) -> DropTarget.SPLIT
         geo.main.contains(p.x.toInt(), p.y.toInt()) -> DropTarget.MAIN
         Rect(geo.strip).apply { inset(0, -geo.dp(12)) }.contains(p.x.toInt(), p.y.toInt()) -> DropTarget.STRIP
         else -> null
@@ -163,7 +197,10 @@ class Bench(private val act: WorkbenchActivity) {
         override fun onTaskRemoved(taskId: Int) { ui.post { onRemoved(taskId) } }
         override fun onTaskMovedToFront(taskInfo: ActivityManager.RunningTaskInfo) { ui.post { onFront(taskInfo) } }
         override fun onTaskMovedToBack(taskInfo: ActivityManager.RunningTaskInfo) {
-            ui.post { if (taskInfo.taskId == mainTask && !busy) onMainGone() }
+            ui.post {
+                if (taskInfo.taskId == mainTask && !busy) onMainGone()
+                else if (taskInfo.taskId == splitTask && !busy && !covered) onSplitGone()
+            }
         }
     }
 
@@ -239,7 +276,9 @@ class Bench(private val act: WorkbenchActivity) {
         val main = mainTask
         val pend = pendingPkg
         val live = landing.toHashSet()
-        fun isActive(id: Int) = id == main || id in live
+        val lower = splitTask
+        val pendLower = pendingSplitPkg
+        fun isActive(id: Int) = id == main || id == lower || id in live
         val visible = tasks.filter { it.taskId !in hid }
         val used = HashSet<Int>()
         val out = ArrayList<StripEntry>()
@@ -248,7 +287,7 @@ class Bench(private val act: WorkbenchActivity) {
             if (tasks.any { it.pkg == cn.packageName && it.taskId in hid }) continue
             val t = visible.firstOrNull { it.pkg == cn.packageName && it.taskId !in used }
             if (t != null) used += t.taskId
-            val active = if (t != null) isActive(t.taskId) else pend == cn.packageName
+            val active = if (t != null) isActive(t.taskId) else pend == cn.packageName || pendLower == cn.packageName
             out += StripEntry(if (t != null) "t" + t.taskId else "p" + key, t, cn, t?.label ?: Apps.label(act, cn.packageName), true, active)
         }
         for (t in visible) if (t.taskId !in used) out += StripEntry("t" + t.taskId, t, t.component, t.label, false, isActive(t.taskId))
@@ -287,6 +326,13 @@ class Bench(private val act: WorkbenchActivity) {
             // The main task disappeared without us noticing (e.g. finished).
             val running = withContext(Dispatchers.IO) { Sys.runningTasks().any { it.taskId == m } }
             if (!running) onMainGone()
+        }
+        if (pendingSplitPkg != null && SystemClock.uptimeMillis() - pendingSplitSince > 6000) {
+            pendingSplitPkg = null
+            if (splitTask == null) mainTask?.let { m ->
+                val r = Rect(geo.main)
+                withContext(Dispatchers.IO) { Sys.prepareFreeform(m, r, densityFor(r)) }
+            }
         }
         if (pendingPkg != null && SystemClock.uptimeMillis() - pendingSince > 5000) {
             pendingPkg = null
@@ -335,8 +381,12 @@ class Bench(private val act: WorkbenchActivity) {
     }
 
     /** Make our window the top one, with a fresh snapshot of the main app drawn where it was. */
-    private suspend fun cover() {
-        if (covered) return
+    private suspend fun cover(collapse: Boolean = true) {
+        lastShown = Rect(mainShown)
+        if (covered) {
+            if (collapse) collapseSplit()
+            return
+        }
         val id = mainTask
         if (id != null) {
             val img = withContext(Dispatchers.IO) { Sys.snapshot(id, fresh = true) }?.asImageBitmap()
@@ -345,19 +395,56 @@ class Bench(private val act: WorkbenchActivity) {
                 snaps[id] = img
             }
         }
+        splitTask?.let { s ->
+            val img = withContext(Dispatchers.IO) { Sys.snapshot(s, fresh = true) }?.asImageBitmap()
+            if (img != null) {
+                splitImage = img
+                snaps[s] = img
+            }
+        }
         frames(2)
         withContext(Dispatchers.IO) { Sys.showTask(act, act.taskId, null) }
         covered = true
         frames(1)
+        if (collapse) collapseSplit()
+    }
+
+    /** Anything that changes the main window ends the split: the lower app flies back to its card. */
+    private fun collapseSplit() {
+        pendingSplitPkg = null
+        val s = splitTask ?: return
+        val from = splitRects().second
+        val img = splitImage
+        val pkg = splitPkg
+        splitTask = null
+        splitPkg = null
+        splitImage = null
+        splitRatio = 0.5f
+        landing += s
+        scope.launch {
+            val f = Flyer(img, icon(pkg), from, cardRectFor(keyOfTask(s)), mainRadius, cardRadius)
+            flyers += f
+            f.p.animateTo(1f, spring(dampingRatio = 0.86f, stiffness = 420f))
+            landing.remove(s)
+            frames(2)
+            flyers.remove(f)
+        }
     }
 
     /** Put task [id] on top of us as a floating window at the main bounds. */
     private suspend fun uncover(id: Int): Boolean {
-        val bounds = Rect(geo.main)
+        val isMain = id == mainTask
+        val bounds = if (isMain && isSplit) splitRects().first else Rect(geo.main)
+        val lower = splitTask.takeIf { isMain }
+        val lowerRect = splitRects().second
         val dpi = densityFor(bounds)
         val ok = withContext(Dispatchers.IO) {
             Sys.prepareFreeform(id, bounds, dpi)
             val shown = Sys.showTask(act, id, bounds)
+            if (lower != null) {
+                Sys.prepareFreeform(lower, lowerRect, dpi)
+                Sys.showTask(act, lower, lowerRect)
+            }
             if (shown) Sys.focus(id)
             shown
         }
@@ -484,10 +571,41 @@ class Bench(private val act: WorkbenchActivity) {
         session.remove(taskId)
         snaps.remove(taskId)
         if (taskId == mainTask) onMainGone()
+        else if (taskId == splitTask) onSplitGone()
+        scheduleReload(0)
+    }
+
+    /** The lower pane's app went away: the upper one takes the whole main window again. */
+    private fun onSplitGone() {
+        splitTask = null
+        splitPkg = null
+        splitImage = null
+        splitRatio = 0.5f
+        val m = mainTask ?: return
+        val b = Rect(geo.main)
+        val dpi = densityFor(b)
+        scope.launch(Dispatchers.IO) { Sys.prepareFreeform(m, b, dpi) }
         scheduleReload(0)
     }
 
     private fun onMainGone() {
+        // Split: the lower app moves up and fills the main window.
+        val s = splitTask
+        if (s != null && !exiting) {
+            mainTask = s
+            mainPkg = splitPkg
+            mainImage = splitImage
+            splitTask = null
+            splitPkg = null
+            splitImage = null
+            splitRatio = 0.5f
+            val b = Rect(geo.main)
+            val dpi = densityFor(b)
+            scope.launch(Dispatchers.IO) { Sys.prepareFreeform(s, b, dpi) }
+            scheduleReload(0)
+            return
+        }
+        pendingSplitPkg = null
         mainTask = null
         mainImage = null
         mainPkg = null
@@ -526,6 +644,24 @@ class Bench(private val act: WorkbenchActivity) {
             return
         }
         val pkg = Sys.packageOf(info)
+        if (id == splitTask) {
+            covered = false
+            return
+        }
+        val pendingSplit = pendingSplitPkg
+        if (pendingSplit != null && pkg == pendingSplit && mainTask != null) {
+            pendingSplitPkg = null
+            splitTask = id
+            splitPkg = pkg
+            covered = false
+            session += id
+            persistSession()
+            val r = splitRects().second
+            val dpi = densityFor(r)
+            scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, r, dpi) }
+            scheduleReload()
+            return
+        }
         val pending = pendingPkg
         if (pending != null && pkg == pending) {
             pendingPkg = null
@@ -603,6 +739,10 @@ class Bench(private val act: WorkbenchActivity) {
             if (covered) uncover(id)
             return@coroutineScope
         }
+        if (id == splitTask) {
+            swapImpl()
+            return@coroutineScope
+        }
         val old = mainTask
         val oldPkg = mainPkg
         cover()
@@ -623,9 +763,9 @@ class Bench(private val act: WorkbenchActivity) {
         }
         // Quick switch: the old window slides out the opposite way, a little smaller, as the new one slides in.
         val oldTo = if (sliding) shrink(main, 0.9f).apply { offset(-shift, 0) } else Rect(main)
-        if (sliding) fl += Flyer(mainImage, icon(oldPkg), Rect(main), oldTo, mainRadius, mainRadius, alphaTo = 0f)
+        if (sliding) fl += Flyer(mainImage, icon(oldPkg), Rect(lastShown), oldTo, mainRadius, mainRadius, alphaTo = 0f)
         fl += Flyer(newImg, icon(item?.pkg), start, Rect(main), if (grow) cardRadius else mainRadius, mainRadius)
-        val fade = if (old != null && !sliding) Flyer(mainImage, icon(oldPkg), Rect(main), Rect(main), mainRadius, mainRadius, alphaTo = 0f) else null
+        val fade = if (old != null && !sliding) Flyer(mainImage, icon(oldPkg), Rect(lastShown), Rect(main), mainRadius, mainRadius, alphaTo = 0f) else null
         if (fade != null) fl += fade
         mainTask = id
         mainPkg = item?.pkg
@@ -670,7 +810,7 @@ class Bench(private val act: WorkbenchActivity) {
         if (old != null) {
             val dest = cardRectFor(keyOfTask(old))
             landing += old
-            fl += Flyer(mainImage, icon(oldPkg), Rect(geo.main), dest, mainRadius, cardRadius)
+            fl += Flyer(mainImage, icon(oldPkg), Rect(lastShown), dest, mainRadius, cardRadius)
         }
         val ic = withContext(Dispatchers.IO) { Apps.icon(act, target.packageName) }
         val startRect = from ?: shrink(geo.main, 0.3f)
@@ -722,7 +862,7 @@ class Bench(private val act: WorkbenchActivity) {
             val fl = ArrayList<Flyer>()
             if (old != null) {
                 landing += old
-                fl += Flyer(mainImage, icon(oldPkg), Rect(geo.main), cardRectFor(keyOfTask(old)), mainRadius, cardRadius)
+                fl += Flyer(mainImage, icon(oldPkg), Rect(lastShown), cardRectFor(keyOfTask(old)), mainRadius, cardRadius)
             }
             fl += Flyer(null, icon(n.pkg), from ?: shrink(geo.main, 0.3f), Rect(geo.main), cardRadius, mainRadius)
             mainTask = null
@@ -752,7 +892,7 @@ class Bench(private val act: WorkbenchActivity) {
         cover()
         val dest = cardRectFor(keyOfTask(old))
         landing += old
-        val f = Flyer(mainImage, icon(mainPkg), Rect(geo.main), dest, mainRadius, cardRadius)
+        val f = Flyer(mainImage, icon(mainPkg), Rect(lastShown), dest, mainRadius, cardRadius)
         mainTask = null
         mainImage = null
         mainPkg = null
@@ -769,7 +909,7 @@ class Bench(private val act: WorkbenchActivity) {
         handleMenu = false
         buzz(android.view.HapticFeedbackConstants.REJECT)
         cover()
-        val f = Flyer(mainImage, icon(mainPkg), Rect(geo.main), shrink(geo.main, 0.86f), mainRadius, cardRadius, alphaTo = 0f)
+        val f = Flyer(mainImage, icon(mainPkg), Rect(lastShown), shrink(geo.main, 0.86f), mainRadius, cardRadius, alphaTo = 0f)
         mainTask = null
         mainImage = null
         mainPkg = null
@@ -829,7 +969,7 @@ class Bench(private val act: WorkbenchActivity) {
         buzz(android.view.HapticFeedbackConstants.CONFIRM)
         cover()
         val isMain = target == mainTask
-        val from = if (isMain) Rect(geo.main) else (fromKey?.let { cardRects[it] } ?: geo.slot(0))
+        val from = if (isMain) Rect(lastShown) else (fromKey?.let { cardRects[it] } ?: geo.slot(0))
         val img = if (isMain) mainImage else snaps[target] ?: withContext(Dispatchers.IO) { Sys.snapshot(target) }?.asImageBitmap()
         val f = Flyer(img, icon(pkgOfTask(target) ?: mainPkg), from, Rect(geo.full), if (isMain) mainRadius else cardRadius, screenRadius)
         if (isMain) mainImage = null else hidden += target
@@ -875,7 +1015,7 @@ class Bench(private val act: WorkbenchActivity) {
         actionsFor = null
         cover()
         val f = mainTask?.let {
-            Flyer(mainImage, icon(mainPkg), Rect(geo.main), shrink(geo.main, 0.9f), mainRadius, cardRadius, alphaTo = 0f)
+            Flyer(mainImage, icon(mainPkg), Rect(lastShown), shrink(geo.main, 0.9f), mainRadius, cardRadius, alphaTo = 0f)
         }
         mainImage = null
         mainPkg = null
@@ -913,6 +1053,214 @@ class Bench(private val act: WorkbenchActivity) {
         finishQuietly()
     }
 
+    // ------------------------------------------------------------------ split
+
+    /** Handle menu "Split": search opens and the app picked there goes into the lower pane. */
+    fun pickForSplit() {
+        if (mainTask == null) return
+        splitPick = true
+        openModal(Modal.SEARCH)
+    }
+
+    /** An app tapped in search: opened normally, or into the lower pane when picking for a split. */
+    fun pickApp(app: dev.satya.workbench.data.AppEntry, from: Rect?) {
+        if (splitPick) op { splitImpl(app, from) } else openApp(app.component, app.user, from)
+    }
+
+    private suspend fun splitImpl(app: dev.satya.workbench.data.AppEntry, from: Rect?) {
+        if (modal != null) closeModalNow(restore = false)
+        splitPick = false
+        actionsFor = null
+        handleMenu = false
+        val m = mainTask
+        if (m == null || app.pkg == mainPkg) {
+            openImpl(app.component, app.user, from)
+            return
+        }
+        if (app.pkg == splitPkg) {
+            uncover(m)
+            return
+        }
+        buzz(android.view.HapticFeedbackConstants.CONFIRM)
+        val wasSplit = isSplit
+        cover(collapse = false)
+        val oldTop = Rect(lastShown)
+        // A different app already in the lower pane goes back to its card.
+        val oldLower = splitTask
+        val fl = ArrayList<Flyer>()
+        if (oldLower != null) {
+            landing += oldLower
+            fl += Flyer(splitImage, icon(splitPkg), splitRects().second, cardRectFor(keyOfTask(oldLower)), mainRadius, cardRadius)
+        }
+        splitTask = null
+        splitImage = null
+        splitPkg = null
+        if (!wasSplit) splitRatio = 0.5f
+        val (top, bottom) = splitRects()
+        val existing = tasks.firstOrNull { it.pkg == app.pkg }
+        val img = existing?.let { snaps[it.taskId] ?: withContext(Dispatchers.IO) { Sys.snapshot(it.taskId) }?.asImageBitmap() }
+        val start = from ?: existing?.let { cardRects[keyOfTask(it.taskId)]?.let(::Rect) } ?: shrink(bottom, 0.3f)
+        val topImg = mainImage
+        // The main app shrinks into the upper pane while the new one grows into the lower.
+        fl += Flyer(topImg, icon(mainPkg), oldTop, Rect(top), mainRadius, mainRadius)
+        fl += Flyer(img, icon(app.pkg), start, Rect(bottom), cardRadius, mainRadius)
+        mainImage = null
+        if (existing != null) {
+            splitTask = existing.taskId
+            splitPkg = existing.pkg
+        } else {
+            pendingSplitPkg = app.pkg
+            pendingSplitSince = SystemClock.uptimeMillis()
+        }
+        flyers.addAll(fl)
+        val dpi = densityFor(top)
+        withContext(Dispatchers.IO) {
+            Sys.prepareFreeform(m, top, dpi)
+            existing?.let { Sys.prepareFreeform(it.taskId, bottom, dpi) }
+        }
+        animate(*fl.toTypedArray())
+        if (oldLower != null) landing.remove(oldLower)
+        mainImage = topImg
+        splitImage = img
+        if (existing != null) {
+            session += existing.taskId
+            persistSession()
+        }
+        uncover(m)
+        if (existing == null) {
+            behindPkgs += app.pkg
+            runCatching {
+                val opts = Sys.freeformOptions(act, Rect(bottom), noAnim = true).toBundle()
+                if (app.user == Apps.myUser) act.startActivity(
+                    Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(app.component)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
+                    opts
+                ) else act.getSystemService(LauncherApps::class.java).startMainActivity(app.component, app.user, null, opts)
+            }.onFailure {
+                Log.w(TAG, "split launch ${app.pkg}", it)
+                pendingSplitPkg = null
+            }
+        }
+        frames(3)
+        flyers.removeAll(fl)
+        scheduleReload(0)
+    }
+
+    /** Tap on the divider: the two panes trade places. */
+    fun swapSplit() = op { swapImpl() }
+
+    private suspend fun swapImpl() {
+        val m = mainTask ?: return
+        val s = splitTask ?: return
+        buzz(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+        cover(collapse = false)
+        val (top, bottom) = splitRects()
+        val mi = mainImage
+        val si = splitImage
+        val a = Flyer(mi, icon(mainPkg), Rect(top), Rect(bottom), mainRadius, mainRadius)
+        val c = Flyer(si, icon(splitPkg), Rect(bottom), Rect(top), mainRadius, mainRadius)
+        val mp = mainPkg
+        mainTask = s
+        mainPkg = splitPkg
+        splitTask = m
+        splitPkg = mp
+        mainImage = null
+        splitImage = null
+        flyers += a
+        flyers += c
+        animate(a, c)
+        mainImage = si
+        splitImage = mi
+        uncover(s)
+        frames(3)
+        flyers.remove(a)
+        flyers.remove(c)
+    }
+
+    /** End the split keeping [keepTop]'s pane: the other app goes back to its card, the kept one fills the window. */
+    fun unsplit(keepTop: Boolean = true) = op {
+        val m = mainTask ?: return@op
+        val s = splitTask
+        if (s == null) {
+            pendingSplitPkg = null
+            if (!covered) uncover(m)
+            return@op
+        }
+        handleMenu = false
+        buzz(android.view.HapticFeedbackConstants.GESTURE_END)
+        cover(collapse = false)
+        val (top, bottom) = splitRects()
+        val goneId = if (keepTop) s else m
+        val keepId = if (keepTop) m else s
+        val goneImg = if (keepTop) splitImage else mainImage
+        val keepImg = if (keepTop) mainImage else splitImage
+        val gonePkg = if (keepTop) splitPkg else mainPkg
+        val keepPkg = if (keepTop) mainPkg else splitPkg
+        landing += goneId
+        val f1 = Flyer(goneImg, icon(gonePkg), if (keepTop) bottom else top, cardRectFor(keyOfTask(goneId)), mainRadius, cardRadius)
+        val f2 = Flyer(keepImg, icon(keepPkg), if (keepTop) top else bottom, Rect(geo.main), mainRadius, mainRadius)
+        splitTask = null
+        splitPkg = null
+        splitImage = null
+        splitRatio = 0.5f
+        mainTask = keepId
+        mainPkg = keepPkg
+        mainImage = null
+        flyers += f1
+        flyers += f2
+        val b = Rect(geo.main)
+        val dpi = densityFor(b)
+        launch(Dispatchers.IO) { Sys.prepareFreeform(keepId, b, dpi) }
+        animate(f1, f2)
+        landing.remove(goneId)
+        mainImage = keepImg
+        uncover(keepId)
+        frames(3)
+        flyers.remove(f1)
+        flyers.remove(f2)
+        scheduleReload(0)
+    }
+
+    private var resizeJob: Job? = null
+
+    /** Divider being dragged: both windows follow (at most one resize in flight; the last position always lands). */
+    fun dragDivider(ratio: Float) {
+        if (busy || splitTask == null) return
+        splitRatio = ratio.coerceIn(SPLIT_MIN, 1f - SPLIT_MIN)
+        if (resizeJob?.isActive == true) return
+        resizeJob = scope.launch { applySplitBounds() }
+    }
+
+    /** Divider released: dragged to an end it closes that pane, otherwise the windows settle at the new size. */
+    fun endDivider(ratio: Float) {
+        Log.d(TAG, "divider released at $ratio")
+        when {
+            ratio < SPLIT_MIN - 0.04f -> unsplit(keepTop = false)
+            ratio > 1f - SPLIT_MIN + 0.04f -> unsplit(keepTop = true)
+            else -> scope.launch {
+                resizeJob?.join()
+                applySplitBounds()
+                buzz(android.view.HapticFeedbackConstants.GESTURE_END)
+            }
+        }
+    }
+
+    private suspend fun applySplitBounds() {
+        while (true) {
+            val r = splitRatio
+            val m = mainTask ?: return
+            val s = splitTask ?: return
+            val (top, bottom) = splitRects(r)
+            val dpi = densityFor(top)
+            withContext(Dispatchers.IO) {
+                Sys.prepareFreeform(m, top, dpi)
+                Sys.prepareFreeform(s, bottom, dpi)
+            }
+            delay(32)
+            if (splitRatio == r) return
+        }
+    }
+
     // ------------------------------------------------------------------ drag an app out of search
 
     fun beginAppDrag(app: dev.satya.workbench.data.AppEntry, p: Offset) {
@@ -937,6 +1285,7 @@ class Bench(private val act: WorkbenchActivity) {
         val from = Rect(p.x.toInt() - s / 2, p.y.toInt() - s / 2, p.x.toInt() + s / 2, p.y.toInt() + s / 2)
         when (dropTargetAt(p)) {
             DropTarget.MAIN -> openApp(app.component, app.user, from)
+            DropTarget.SPLIT -> op { splitImpl(app, from) }
             DropTarget.STRIP -> dockApp(app)
             null -> buzz(android.view.HapticFeedbackConstants.GESTURE_END)
         }
@@ -1122,7 +1471,7 @@ class Bench(private val act: WorkbenchActivity) {
         buzz(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
         actionsFor = null
         handleMenu = false
-        cover()
+        cover(collapse = false)
         act.setFocusable(true)
         modal = m
     }
@@ -1135,6 +1484,7 @@ class Bench(private val act: WorkbenchActivity) {
 
     private suspend fun closeModalNow(restore: Boolean) {
         modal = null
+        splitPick = false
         act.hideIme()
         act.setFocusable(false)
         if (restore) mainTask?.let { uncover(it) }

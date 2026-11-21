@@ -229,7 +229,7 @@ fun SearchPanel(b: Bench) {
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.popIn(0, rise = 28.dp, from = 0.94f).padding(top = 10.dp, bottom = 10.dp)) {
             dev.satya.workbench.ui.CouiSearchBar("Search apps", { q = it }, {
-                results.firstOrNull()?.let { b.openApp(it.component, it.user, null) }
+                results.firstOrNull()?.let { b.pickApp(it, null) }
             }, Modifier.weight(1f).height(56.dp), onEditing = { editing = it })
             // While typing, the bar's own Cancel takes this spot; the close button folds away.
             androidx.compose.animation.AnimatedVisibility(
@@ -243,7 +243,8 @@ fun SearchPanel(b: Bench) {
                 }
             }
         }
-        if (q.isBlank()) Text("Long-press an app to pin it to the strip", color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp, modifier = Modifier.popIn(0, fresh()).padding(start = 4.dp, bottom = 8.dp))
+        if (b.splitPick) Text("Pick an app for the lower half", color = Color(0xFF9BD39B), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.popIn(0, fresh()).padding(start = 4.dp, bottom = 8.dp))
+        else if (q.isBlank()) Text("Long-press an app to pin it to the strip, or drag it onto the bench", color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp, modifier = Modifier.popIn(0, fresh()).padding(start = 4.dp, bottom = 8.dp))
         LazyVerticalGrid(
             state = grid,
             columns = GridCells.Fixed(5),
@@ -255,7 +256,7 @@ fun SearchPanel(b: Bench) {
                 item(key = "h:top", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) { GridHeader("Most used", Modifier.popIn(0, fresh())) }
                     itemsIndexed(top, key = { _, it -> "top:" + it.key + "#" + it.user.hashCode() }) { i, app ->
                     AppCell(app, pins.contains(app.key), Modifier.animateItem().popIn(1 + i / 5 + i % 5, fresh()),
-                        onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) }, bench = b)
+                        onClick = { r -> b.pickApp(app, r) }, onLong = { Prefs.togglePin(app.key) }, bench = b)
                 }
                 item(key = "h:div", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                     Box(Modifier.popIn(4, fresh(), from = 0.6f).fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp).height(1.dp).background(Color.White.copy(alpha = 0.14f)))
@@ -271,7 +272,7 @@ fun SearchPanel(b: Bench) {
                         placementSpec = androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 420f),
                         fadeOutSpec = androidx.compose.animation.core.tween(120)
                     ).popIn(base + i / 5 + i % 5, fresh()),
-                    onClick = { r -> b.openApp(app.component, app.user, r) }, onLong = { Prefs.togglePin(app.key) }, bench = b)
+                    onClick = { r -> b.pickApp(app, r) }, onLong = { Prefs.togglePin(app.key) }, bench = b)
             }
         }
     }

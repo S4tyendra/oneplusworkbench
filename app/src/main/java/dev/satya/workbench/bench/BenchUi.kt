@@ -1,5 +1,8 @@
 package dev.satya.workbench.bench
 
+import androidx.compose.material.icons.rounded.HorizontalSplit
+import androidx.compose.material.icons.rounded.CropPortrait
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.foundation.layout.requiredSize
@@ -190,7 +193,11 @@ private fun AppDragLayer(b: Bench) {
     val appear = remember { Animatable(0f) }
     LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = 500f)) }
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }) {
-        DropRect(b.geo.main, "Open here", hit == Bench.DropTarget.MAIN, b.mainRadius)
+        if (b.mainTask != null) {
+            val z = b.splitZone()
+            DropRect(Rect(b.geo.main.left, b.geo.main.top, b.geo.main.right, z.top - b.geo.dp(6)), "Open here", hit == Bench.DropTarget.MAIN, b.mainRadius)
+            DropRect(z, "Split", hit == Bench.DropTarget.SPLIT, b.mainRadius)
+        } else DropRect(b.geo.main, "Open here", hit == Bench.DropTarget.MAIN, b.mainRadius)
         DropRect(Rect(b.geo.strip).apply { inset(-b.geo.dp(4), 0) }, "Keep in strip", hit == Bench.DropTarget.STRIP, with(d) { 22.dp.toPx() })
         val sz = 64.dp
         val lift by animateFloatAsState(if (hit != null) 1.18f else 1.05f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "lift")
@@ -224,6 +231,10 @@ private fun DropRect(r: Rect, label: String, hot: Boolean, radius: Float) {
 
 @Composable
 private fun MainArea(b: Bench) {
+    if (b.isSplit) {
+        SplitArea(b)
+        return
+    }
     val g = b.geo
     val img = b.mainImage
     val inFlight = b.flyers.isNotEmpty()
@@ -241,6 +252,67 @@ private fun MainArea(b: Bench) {
             b.mainPkg != null -> if (!inFlight) Splash(b.mainPkg)
             !inFlight -> EmptyMain(b)
         }
+    }
+}
+
+/** Split main window: what the bench shows of each pane while it covers the apps, and the divider between them. */
+@Composable
+private fun SplitArea(b: Bench) {
+    val (top, bottom) = b.splitRects()
+    val inFlight = b.flyers.isNotEmpty()
+    @Composable
+    fun Pane(r: Rect, img: ImageBitmap?, pkg: String?) = Box(
+        Modifier.at(r).graphicsLayer { alpha = b.reveal.value; shape = RoundedCornerShape(b.mainRadius); clip = true }
+    ) {
+        when {
+            img != null -> SnapImage(b, img, r, Modifier.fillMaxSize())
+            !inFlight -> Splash(pkg)
+        }
+    }
+    Pane(top, b.mainImage, b.mainPkg)
+    Pane(bottom, b.splitImage, b.splitPkg ?: b.pendingSplitPkg)
+    SplitDivider(b, top, bottom)
+}
+
+/** Drag to resize both panes (to an end closes that pane); tap to swap them. */
+@Composable
+private fun SplitDivider(b: Bench, top: Rect, bottom: Rect) {
+    val g = b.geo
+    val gapRect = Rect(g.main.left, top.bottom, g.main.right, bottom.top)
+    var dragging by remember { mutableStateOf(false) }
+    val w by animateFloatAsState(if (dragging) 1.5f else 1f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "div")
+    val usable = (g.main.height() - g.dp(Bench.SPLIT_GAP_DP)).toFloat()
+    // The divider moves with the finger, so local drag deltas shrink: work from the finger's window position.
+    var originY by remember { mutableStateOf(0f) }
+    Box(
+        Modifier
+            .at(gapRect)
+            .graphicsLayer { alpha = b.reveal.value }
+            .onGloballyPositioned { originY = it.positionInWindow().y }
+            .pointerInput(Unit) {
+                var ratio = 0f
+                detectVerticalDragGestures(
+                    onDragStart = { dragging = true; ratio = b.splitRatio; b.buzz(android.view.HapticFeedbackConstants.DRAG_START) },
+                    onDragEnd = { dragging = false; b.endDivider(ratio) },
+                    // Live window resizes can make the system cancel the stream; the finger's position still counts.
+                    onDragCancel = { dragging = false; b.endDivider(ratio) }
+                ) { c, _ ->
+                    c.consume()
+                    val y = originY + c.position.y
+                    ratio = (y - b.geo.main.top - b.geo.dp(Bench.SPLIT_GAP_DP) / 2f) / usable
+                    b.dragDivider(ratio)
+                }
+            }
+            .cleanTap { b.swapSplit() },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier
+                .graphicsLayer { scaleX = w; scaleY = w }
+                .size(52.dp, 5.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = if (dragging) 1f else 0.85f))
+        )
     }
 }
 
@@ -368,7 +440,10 @@ private fun MainHandle(b: Bench) {
                     HandleBtn(Icons.Rounded.Remove, hp(0)) { b.minimize() }
                     HandleBtn(Icons.Rounded.OpenInFull, hp(1)) { b.expand() }
                     HandleBtn(if (b.isMainPinned()) Icons.Rounded.PushPin else Icons.Outlined.PushPin, hp(2)) { b.togglePinMain() }
-                    HandleBtn(Icons.Rounded.Close, hp(3)) { b.closeMain() }
+                    HandleBtn(if (b.isSplit) Icons.Rounded.CropPortrait else Icons.Rounded.HorizontalSplit, hp(3)) {
+                        if (b.isSplit) b.unsplit(keepTop = true) else b.pickForSplit()
+                    }
+                    HandleBtn(Icons.Rounded.Close, hp(4)) { b.closeMain() }
                 }
             }
         }
