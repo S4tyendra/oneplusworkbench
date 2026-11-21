@@ -26,6 +26,7 @@
 
         <activity
             android:name=".ui.SettingsActivity"
+            android:excludeFromRecents="true"
             android:exported="true"
             android:theme="@style/Theme.CouiKit">
             <!-- Long-press on the Quick Settings tile, and the module's settings in the Xposed manager. -->
