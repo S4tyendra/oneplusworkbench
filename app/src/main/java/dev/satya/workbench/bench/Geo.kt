@@ -22,10 +22,9 @@ class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d:
     val listPad = dp(6)
     val crossPad = dp(8)
     /**
-     * The tools at the end of the strip (divider, notifications and shelf tiles, settings and search circles).
-     * Matches the Compose layout in StripTools.
+     * The fixed end of the strip (settings and search circles). Matches the Compose layout in StripTools.
      */
-    val toolsLen = if (edge.vertical) dp(260) else dp(200)
+    val toolsLen = if (edge.vertical) dp(118) else dp(58)
 
     val full = Rect(0, 0, w, h)
     /** Main window size relative to the screen. */

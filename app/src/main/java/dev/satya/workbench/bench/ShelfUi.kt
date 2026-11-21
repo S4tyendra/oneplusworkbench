@@ -79,7 +79,7 @@ private val Accent = Color(0xFF9BD39B)
 
 /** The Shelf laid out along the strip: compact tiles, newest first (copied text and images land here on their own). */
 @Composable
-fun ShelfList(b: Bench, vertical: Boolean, tile: Dp, tileLong: Dp) {
+fun ShelfList(b: Bench, vertical: Boolean, tile: Dp, tileLong: Dp, tail: @Composable () -> Unit) {
     val items by Shelf.items.collectAsState()
     val pad = PaddingValues(8.dp)
     val content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
@@ -89,6 +89,7 @@ fun ShelfList(b: Bench, vertical: Boolean, tile: Dp, tileLong: Dp) {
                 Text("Copy something, or drag it here from any app", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, textAlign = TextAlign.Center, lineHeight = 14.sp)
             }
         }
+        item(key = "tiles") { Box(Modifier.animateItem()) { tail() } }
     }
     if (vertical) LazyColumn(Modifier.fillMaxSize(), contentPadding = pad, verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally, content = content)
     else LazyRow(Modifier.fillMaxSize(), contentPadding = pad, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = content)

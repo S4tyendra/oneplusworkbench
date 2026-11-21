@@ -528,7 +528,7 @@ private fun Strip(b: Bench) {
             Column(Modifier.fillMaxSize()) {
                 ShelfSwap(b, Modifier.weight(1f).fillMaxWidth()) { shelf ->
                     // AnimatedContent hands its full width down as a minimum: nest, so the shelf keeps to the visible part.
-                    if (shelf) Box(Modifier.fillMaxSize()) { Box(Modifier.width(vis).fillMaxHeight()) { ShelfList(b, true, vis - 16.dp, vis - 16.dp) } }
+                    if (shelf) Box(Modifier.fillMaxSize()) { Box(Modifier.width(vis).fillMaxHeight()) { ShelfList(b, true, vis - 16.dp, vis - 16.dp) { StripTiles(b, true, vis) } } }
                     else LazyColumn(
                         state = b.listState,
                         modifier = Modifier.fillMaxSize().fadeEdges(b, true),
@@ -537,6 +537,8 @@ private fun Strip(b: Bench) {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         items(entries, key = { it.key }) { StripItem(b, it, Modifier.animateItem()) }
+                        // Kept to the part of the strip the main window doesn't cover.
+                        item(key = "tiles") { Box(Modifier.fillParentMaxWidth().animateItem()) { StripTiles(b, true, vis) } }
                     }
                 }
                 StripTools(b, true, Modifier.width(vis).height(tools))
@@ -544,7 +546,7 @@ private fun Strip(b: Bench) {
         } else {
             Row(Modifier.fillMaxSize()) {
                 ShelfSwap(b, Modifier.weight(1f).fillMaxHeight()) { shelf ->
-                    if (shelf) ShelfList(b, false, pxDp(g.cardH) * 0.66f, pxDp(g.cardH))
+                    if (shelf) ShelfList(b, false, pxDp(g.cardH) * 0.66f, pxDp(g.cardH)) { StripTiles(b, false, pxDp(g.cardH)) }
                     else LazyRow(
                         state = b.listState,
                         modifier = Modifier.fillMaxSize().fadeEdges(b, false),
@@ -553,6 +555,7 @@ private fun Strip(b: Bench) {
                         verticalAlignment = Alignment.Top
                     ) {
                         items(entries, key = { it.key }) { StripItem(b, it, Modifier.padding(top = pxDp(g.crossPad)).animateItem()) }
+                        item(key = "tiles") { Box(Modifier.padding(top = pxDp(g.crossPad)).animateItem()) { StripTiles(b, false, pxDp(g.cardH)) } }
                     }
                 }
                 StripTools(b, false, Modifier.fillMaxHeight().width(tools))
@@ -567,29 +570,33 @@ private val ShelfGreen = Color(0xFF9BD39B)
 private val Ink = Color(0xFF0B0C10)
 
 /**
- * The end of the strip, the same on every edge: a divider, the notifications tile, the shelf tile, and two circles.
- * Normally the circles are settings (drag it to move the strip) and search (hold it for groups); with the shelf
- * open they become "all to FileDock" and "back to the apps". Its length is [Geo.toolsLen].
+ * The fixed end of the strip: the settings and search circles (with the shelf open: "all to FileDock" and "back").
+ * Its length is [Geo.toolsLen]. The notifications and shelf tiles ride at the end of the list itself (StripTiles).
  */
 @Composable
 private fun StripTools(b: Bench, vertical: Boolean, modifier: Modifier) {
-    val tile = 60.dp
-    if (vertical) Column(modifier.padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.padding(vertical = 6.dp).fillMaxWidth(0.55f).height(1.dp).background(Color.White.copy(alpha = 0.16f)))
-        Spacer(Modifier.height(1.dp))
-        NotiTile(b, Modifier.fillMaxWidth().height(tile))
+    Box(modifier.padding(if (vertical) PaddingValues(top = 12.dp, bottom = 10.dp) else PaddingValues(horizontal = 6.dp)), contentAlignment = Alignment.Center) {
+        ToolCircles(b)
+    }
+}
+
+/** Last item of the strip list: a divider, then the notifications and shelf tiles stacked across the strip. */
+@Composable
+private fun StripTiles(b: Bench, vertical: Boolean, len: Dp) {
+    val line = Color.White.copy(alpha = 0.16f)
+    if (vertical) Column(Modifier.width(len), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.padding(vertical = 4.dp).fillMaxWidth(0.55f).height(1.dp).background(line))
+        Spacer(Modifier.height(6.dp))
+        NotiTile(b, Modifier.width(len - 16.dp).height(54.dp))
         Spacer(Modifier.height(8.dp))
-        ArchiveTile(b, Modifier.fillMaxWidth().height(tile))
-        Spacer(Modifier.height(12.dp))
-        ToolCircles(b)
-    } else Row(modifier.padding(vertical = pxDp(b.geo.crossPad)), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.padding(horizontal = 6.dp).width(1.dp).fillMaxHeight(0.55f).background(Color.White.copy(alpha = 0.16f)))
-        Spacer(Modifier.width(1.dp))
-        NotiTile(b, Modifier.width(tile).fillMaxHeight())
-        Spacer(Modifier.width(8.dp))
-        ArchiveTile(b, Modifier.width(tile).fillMaxHeight())
-        Spacer(Modifier.width(8.dp))
-        ToolCircles(b)
+        ArchiveTile(b, Modifier.width(len - 16.dp).height(54.dp))
+    } else Row(Modifier.height(len), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.padding(horizontal = 4.dp).width(1.dp).fillMaxHeight(0.55f).background(line))
+        Spacer(Modifier.width(6.dp))
+        Column(Modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            NotiTile(b, Modifier.width(52.dp).weight(1f))
+            ArchiveTile(b, Modifier.width(52.dp).weight(1f))
+        }
     }
 }
 
@@ -604,7 +611,7 @@ private fun NotiTile(b: Bench, modifier: Modifier) {
         b.buzz(if (on) android.view.HapticFeedbackConstants.TOGGLE_OFF else android.view.HapticFeedbackConstants.TOGGLE_ON)
         if (on) b.closeModal() else b.openModal(Modal.NOTIFS)
     }) { fg ->
-        Icon(Icons.Rounded.Notifications, null, tint = fg, modifier = Modifier.size(22.dp))
+        Icon(Icons.Rounded.Notifications, null, tint = fg, modifier = Modifier.size(20.dp))
         CountPill(n, if (on) Color.White else NotiPurple, if (on) NotiPurple else Color.White)
     }
 }
@@ -615,7 +622,7 @@ private fun ArchiveTile(b: Bench, modifier: Modifier) {
     val items by dev.satya.workbench.data.Shelf.items.collectAsState()
     val on = b.shelfOpen
     ToolTile(on, ShelfGreen, Ink, "Shelf", modifier, onClick = { b.toggleShelf() }) { fg ->
-        Icon(Icons.Rounded.Inbox, null, tint = fg, modifier = Modifier.size(22.dp))
+        Icon(Icons.Rounded.Inbox, null, tint = fg, modifier = Modifier.size(20.dp))
         CountPill(items.size, if (on) Ink else ShelfGreen, if (on) ShelfGreen else Ink)
     }
 }
@@ -629,7 +636,7 @@ private fun ToolTile(
     val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val pressed by press.collectIsPressedAsState()
     val s by animateFloatAsState(if (pressed) 0.93f else 1f, spring(dampingRatio = 0.5f, stiffness = 700f), label = "press")
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(16.dp)
     val fg = androidx.compose.ui.graphics.lerp(Color.White, onAccent, t)
     Column(
         modifier
@@ -639,7 +646,7 @@ private fun ToolTile(
             .border(1.dp, Color.White.copy(alpha = 0.10f * (1f - t)), shape)
             .clickable(interactionSource = press, indication = null, onClick = onClick)
             .semantics { contentDescription = desc },
-        verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally
     ) { content(fg) }
 }
