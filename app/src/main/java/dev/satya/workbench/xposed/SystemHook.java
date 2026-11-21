@@ -36,7 +36,10 @@ public class SystemHook implements IXposedHookLoadPackage {
             "android.permission.REMOVE_TASKS",
             "android.permission.REORDER_TASKS",
             "android.permission.INTERACT_ACROSS_USERS",
-            "android.permission.INTERACT_ACROSS_USERS_FULL"
+            "android.permission.INTERACT_ACROSS_USERS_FULL",
+            // Shelf clipboard history: read clips while in the background, without the "pasted from" toast.
+            "android.permission.READ_CLIPBOARD_IN_BACKGROUND",
+            "android.permission.SUPPRESS_CLIPBOARD_ACCESS_NOTIFICATION"
     ));
     private static volatile int sAppId = -1;
     private static volatile boolean sInstalled = false;

@@ -474,6 +474,11 @@ class Bench(private val act: WorkbenchActivity) {
         activeFlow.value = true
         Sys.register(listener)
         scope.launch(Dispatchers.IO) { Apps.refresh(act) }
+        // Clipboard history fallback, in case a copy happened while the listener couldn't read it.
+        scope.launch(Dispatchers.IO) {
+            val cm = act.getSystemService(android.content.ClipboardManager::class.java)
+            dev.satya.workbench.data.Shelf.ingestClip(act, runCatching { cm.primaryClip }.getOrNull())
+        }
         scope.launch { reloadNow() }
         scope.launch {
             androidx.compose.runtime.snapshotFlow { mainTask to mainPkg }.collect { (t, p) ->

@@ -41,6 +41,14 @@ class EdgeService : AccessibilityService() {
     private var imeVisible = false
     private var locked = false
     private var attached = false
+    private var clipboard: android.content.ClipboardManager? = null
+    private val clipListener = android.content.ClipboardManager.OnPrimaryClipChangedListener { takeClip() }
+
+    private fun takeClip() {
+        val cm = clipboard ?: return
+        val clip = runCatching { cm.primaryClip }.getOrNull() ?: return
+        kotlin.concurrent.thread(name = "wb-clip") { dev.satya.workbench.data.Shelf.ingestClip(this, clip) }
+    }
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
@@ -59,6 +67,9 @@ class EdgeService : AccessibilityService() {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_USER_PRESENT)
         })
+        // Clipboard history for the Shelf. Background reads are allowed by the system hook.
+        clipboard = getSystemService(android.content.ClipboardManager::class.java).also { it.addPrimaryClipChangedListener(clipListener) }
+        takeClip()
         scope.launch {
             combine(Prefs.handleEnabled, Prefs.handleSide, Prefs.handleY, Bench.activeFlow, Prefs.handleTransparency) { _, _, _, _, _ -> }.collect { update() }
         }
@@ -116,6 +127,7 @@ class EdgeService : AccessibilityService() {
         running = false
         scope.cancel()
         runCatching { unregisterReceiver(screenReceiver) }
+        clipboard?.removePrimaryClipChangedListener(clipListener)
         if (attached) runCatching { wm.removeView(handle) }
         super.onDestroy()
     }

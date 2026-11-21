@@ -25,6 +25,10 @@ data class ShelfItem(
     val text: String,
     val path: String,
     val time: Long,
+    /** "clip" when it came from the clipboard history, "drop" when it was dropped or pasted in. */
+    val src: String = "drop",
+    /** Content hash of a file item, used to keep the shelf free of duplicates. */
+    val hash: String = "",
 ) {
     val isImage get() = kind == "file" && mime.startsWith("image/")
 }
@@ -49,26 +53,92 @@ object Shelf {
             val a = JSONArray(File(dir, "index.json").readText())
             (0 until a.length()).map { i ->
                 val o = a.getJSONObject(i)
-                ShelfItem(o.getString("id"), o.getString("kind"), o.optString("mime"), o.optString("name"), o.optString("text"), o.optString("path"), o.optLong("time"))
+                ShelfItem(o.getString("id"), o.getString("kind"), o.optString("mime"), o.optString("name"), o.optString("text"), o.optString("path"), o.optLong("time"), o.optString("src", "drop"), o.optString("hash"))
             }.filter { it.kind == "text" || File(it.path).exists() }
         }.getOrDefault(emptyList())
+        dedupeLoaded()
+        lastClipStamp = runCatching { File(dir, "clipstamp").readText().toLong() }.getOrDefault(0L)
     }
 
     private fun save() {
         val a = JSONArray()
-        for (s in items.value) a.put(JSONObject().put("id", s.id).put("kind", s.kind).put("mime", s.mime).put("name", s.name).put("text", s.text).put("path", s.path).put("time", s.time))
+        for (s in items.value) a.put(
+            JSONObject().put("id", s.id).put("kind", s.kind).put("mime", s.mime).put("name", s.name).put("text", s.text)
+                .put("path", s.path).put("time", s.time).put("src", s.src).put("hash", s.hash)
+        )
         runCatching { File(dir, "index.json").writeText(a.toString()) }
     }
 
-    private fun add(s: ShelfItem) { items.value = listOf(s) + items.value; save() }
+    /** Newest first, no duplicates (a repeat moves the old copy to the front), at most [MAX] items. */
+    @Synchronized
+    private fun add(s: ShelfItem) {
+        val dup = items.value.firstOrNull { it.sameAs(s) }
+        if (dup != null && s.kind == "file" && dup.path != s.path) runCatching { File(s.path).delete() }
+        val front = dup?.copy(time = s.time, src = if (s.src == "drop") "drop" else dup.src) ?: s
+        val all = listOf(front) + items.value.filter { it.id != front.id }
+        for (old in all.drop(MAX)) if (old.kind == "file") { runCatching { File(old.path).delete() }; thumbs.remove(old.id) }
+        items.value = all.take(MAX)
+        save()
+    }
 
-    fun addText(t: String) {
+    private fun ShelfItem.sameAs(o: ShelfItem) = kind == o.kind && when (kind) {
+        "text" -> text.trim() == o.text.trim()
+        else -> hash.isNotEmpty() && hash == o.hash
+    }
+
+    const val MAX = 50
+
+    /** Items kept before the shelf deduplicated: hash old files, drop repeats (newest copy wins), cap the list. */
+    private fun dedupeLoaded() {
+        val hashed = items.value.map { s ->
+            if (s.kind != "file" || s.hash.isNotEmpty()) s
+            else s.copy(hash = runCatching { hashFile(File(s.path)) }.getOrDefault(""))
+        }
+        val kept = ArrayList<ShelfItem>()
+        for (s in hashed) {
+            if (kept.any { it.sameAs(s) } || kept.size >= MAX) { if (s.kind == "file") runCatching { File(s.path).delete() } }
+            else kept += s
+        }
+        if (kept != items.value) { items.value = kept; save() }
+    }
+
+    private fun hashFile(f: File): String {
+        val md = java.security.MessageDigest.getInstance("SHA-1")
+        f.inputStream().use { inp -> val buf = ByteArray(64 * 1024); while (true) { val n = inp.read(buf); if (n < 0) break; md.update(buf, 0, n) } }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun addText(t: String, src: String = "drop") {
         if (t.isBlank()) return
-        add(ShelfItem("s" + System.nanoTime(), "text", "text/plain", "", t, "", System.currentTimeMillis()))
+        add(ShelfItem("s" + System.nanoTime(), "text", "text/plain", "", t, "", System.currentTimeMillis(), src))
+    }
+
+    /** When the clip last taken from the clipboard was set, so the same clip is never taken twice. */
+    @Volatile private var lastClipStamp = 0L
+
+    /**
+     * Clipboard history: take what was just copied (text, images, files) into the shelf. Our own copies
+     * (label "Shelf") and clips marked sensitive (passwords) are skipped. Call off the main thread.
+     */
+    fun ingestClip(ctx: Context, clip: ClipData?) {
+        if (clip == null || clip.itemCount == 0) return
+        val d = clip.description
+        if (d.label == "Shelf") return
+        val stamp = d.timestamp
+        if (stamp != 0L && stamp == lastClipStamp) return
+        lastClipStamp = stamp
+        runCatching { File(dir, "clipstamp").writeText(stamp.toString()) }
+        if (d.extras?.getBoolean("android.content.extra.IS_SENSITIVE") == true) return
+        for (i in 0 until clip.itemCount) {
+            val it = clip.getItemAt(i)
+            val uri = it.uri
+            if (uri != null) addUri(ctx, uri, if (i < d.mimeTypeCount) d.getMimeType(i) else null, "clip")
+            else it.text?.toString()?.let { t -> addText(t, "clip") }
+        }
     }
 
     /** Copy a content:// (or file://) item into the shelf. Call off the main thread while the drop permission is held. */
-    fun addUri(ctx: Context, uri: Uri, mimeHint: String?): Boolean = runCatching {
+    fun addUri(ctx: Context, uri: Uri, mimeHint: String?, src: String = "drop"): Boolean = runCatching {
         val cr = ctx.contentResolver
         val mime = cr.getType(uri) ?: mimeHint ?: "application/octet-stream"
         var name = runCatching {
@@ -77,8 +147,10 @@ object Shelf {
         if (!name.contains('.')) android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)?.let { name += ".$it" }
         val id = "s" + System.nanoTime()
         val f = File(dir, id + "_" + name.replace(Regex("[^A-Za-z0-9._ -]"), "_").take(80))
-        cr.openInputStream(uri)!!.use { inp -> f.outputStream().use { inp.copyTo(it) } }
-        add(ShelfItem(id, "file", mime, name, "", f.absolutePath, System.currentTimeMillis()))
+        val md = java.security.MessageDigest.getInstance("SHA-1")
+        cr.openInputStream(uri)!!.use { inp -> java.security.DigestInputStream(inp, md).use { d -> f.outputStream().use { d.copyTo(it) } } }
+        val hash = md.digest().joinToString("") { "%02x".format(it) }
+        add(ShelfItem(id, "file", mime, name, "", f.absolutePath, System.currentTimeMillis(), src, hash))
         true
     }.onFailure { Log.w(TAG, "shelf: copy $uri", it) }.getOrDefault(false)
 
