@@ -136,6 +136,7 @@ class SettingsActivity : Activity() {
         }
         return coui.group(
             coui.row("Show handle", "Swipe inward from it to open Workbench. The Quick Settings tile works too.", coui.switch(Prefs.handleEnabled.value) { Prefs.setHandleEnabled(it) }),
+            coui.row("Auto-hide", "Slides away after a few seconds. Swipe the same spot to open Workbench.", coui.switch(Prefs.handleAutoHide.value) { Prefs.setHandleAutoHide(it) }),
             sideRow,
             sliderRow("Height on screen", Prefs.handleY.value, null) { Prefs.setHandleY(it / 100f) },
             sliderRow("Handle transparency", Prefs.handleTransparency.value, { "$it%" }) { Prefs.setHandleTransparency(it / 100f) },
@@ -143,6 +144,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun features(): View = coui.group(
+        coui.row("Keyboard in search", "Search opens ready to type", coui.switch(Prefs.searchKeyboard.value) { Prefs.setSearchKeyboard(it) }),
         coui.row("Haptics", "Taps, docking, switching and drop targets", coui.switch(Prefs.haptics.value) { Prefs.setHaptics(it) }),
         coui.row("Notification badges", "Unread counts on cards and the bell", coui.switch(Prefs.badges.value) { Prefs.setBadges(it) }),
         coui.row("Smart suggestions", "Apps you use together, and groups that open by time of day or with headphones", coui.switch(Prefs.suggestions.value) { Prefs.setSuggestions(it) }),

@@ -15,6 +15,7 @@ public interface IActivityTaskManager extends IInterface {
     int startActivityFromRecents(int taskId, Bundle options) throws RemoteException;
     boolean removeTask(int taskId) throws RemoteException;
     void setFocusedTask(int taskId) throws RemoteException;
+    void resizeTask(int taskId, android.graphics.Rect bounds, int resizeMode) throws RemoteException;
     void registerTaskStackListener(ITaskStackListener listener) throws RemoteException;
     void unregisterTaskStackListener(ITaskStackListener listener) throws RemoteException;
     IWindowOrganizerController getWindowOrganizerController() throws RemoteException;

@@ -166,7 +166,7 @@ fun CouiSegments(labels: List<String>, selected: Int, modifier: Modifier = Modif
  * keyboard and shows Cancel. Cancel morphs it back and clears the query.
  */
 @Composable
-fun CouiSearchBar(hint: String, onQuery: (String) -> Unit, onGo: () -> Unit, modifier: Modifier = Modifier, onEditing: (Boolean) -> Unit = {}) {
+fun CouiSearchBar(hint: String, onQuery: (String) -> Unit, onGo: () -> Unit, modifier: Modifier = Modifier, onEditing: (Boolean) -> Unit = {}, autoOpen: Boolean = false) {
     val coui = LocalCoui.current
     val q by rememberUpdatedState(onQuery)
     val go by rememberUpdatedState(onGo)
@@ -191,13 +191,14 @@ fun CouiSearchBar(hint: String, onQuery: (String) -> Unit, onGo: () -> Unit, mod
             Kit.onStateChange(coui, bar) { _, new -> if (new == Kit.STATE_NORMAL) et.setText("") }
             // Standalone, the bar leaves both morphs to its host: a tap on the collapsed pill opens it for
             // typing, and Cancel clears the query, drops the keyboard and folds it back.
-            bar.setOnClickListener {
+            val open = {
                 if (coui.call(bar, "getSearchState") == Kit.STATE_NORMAL) {
                     coui.call(bar, "changeStateWithAnimation", Kit.STATE_EDIT)
                     runCatching { coui.call(bar, "openSoftInput", true) }
                     editing(true)
                 }
             }
+            bar.setOnClickListener { open() }
             (coui.call(bar, "getFunctionalButton") as? TextView)?.apply {
                 setTextColor(android.graphics.Color.WHITE)
                 setOnClickListener {
@@ -209,6 +210,8 @@ fun CouiSearchBar(hint: String, onQuery: (String) -> Unit, onGo: () -> Unit, mod
                     editing(false)
                 }
             }
+            // Opened for typing right away: same path as a tap, once the panel has popped in.
+            if (autoOpen) bar.postDelayed({ if (bar.isAttachedToWindow) runCatching { open() }.onFailure { Log.w(Kit.TAG, "search auto-open", it) } }, 180)
             bar
         },
         modifier = modifier

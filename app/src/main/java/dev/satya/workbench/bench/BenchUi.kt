@@ -1,5 +1,9 @@
 package dev.satya.workbench.bench
 
+import dev.satya.workbench.service.EdgeService
+import dev.satya.workbench.service.MainPill
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.animation.animateContentSize
 import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.material.icons.rounded.HorizontalSplit
@@ -167,7 +171,7 @@ fun BenchUi(b: Bench) {
     val panelBlur by androidx.compose.animation.core.animateDpAsState(if (b.modal != null && b.modal != Modal.NOTIFS && b.appDrag == null) 28.dp else 0.dp, tween(220), label = "panelBlur")
     Box(Modifier.fillMaxSize()) {
       Box(Modifier.fillMaxSize().then(if (panelBlur > 0.dp) Modifier.blur(panelBlur) else Modifier)) {
-        // Dim + tap-to-exit backdrop
+        // Dim backdrop: a tap only dismisses open menus and the notifications panel
         Box(
             Modifier
                 .fillMaxSize()
@@ -388,6 +392,28 @@ fun PillButton(icon: ImageVector, text: String, onClick: () -> Unit) {
 private fun MainHandle(b: Bench) {
     val g = b.geo
     val d = LocalDensity.current
+    // The handle itself is drawn inside the app's status-bar band by an overlay above the app (MainPill);
+    // this row above the window keeps the same gestures and holds the menu.
+    val revealed by remember { derivedStateOf { b.reveal.value >= 0.999f } }
+    val pillOn = !b.handleMenu && revealed && b.flyers.isEmpty()
+    val frame = b.mainShown
+    val band = if (!pillOn) null else {
+        val inset = frame.width() * 15 / 100
+        val bh = (g.statusH * frame.width() / g.w.toFloat()).roundToInt().coerceAtLeast(with(d) { 18.dp.roundToPx() })
+        android.graphics.Rect(frame.left + inset, frame.top, frame.right - inset, frame.top + bh)
+    }
+    DisposableEffect(Unit) {
+        EdgeService.instance?.mainPill?.actions = object : MainPill.Actions {
+            override fun tap() { b.handleMenu = true }
+            override fun up() { b.expand() }
+            override fun down() { b.minimize() }
+            override fun side(dir: Int) { b.quickSwitch(dir) }
+        }
+        onDispose {
+            EdgeService.instance?.mainPill?.let { it.show(null); it.actions = null }
+        }
+    }
+    SideEffect { EdgeService.instance?.mainPill?.show(band) }
     Box(
         Modifier
             .at(g.handle)
@@ -429,7 +455,8 @@ private fun MainHandle(b: Bench) {
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Box(
+                    // Without the overlay service, draw the handle here as before.
+                    if (EdgeService.instance == null) Box(
                         Modifier
                             .graphicsLayer {
                                 translationY = (dy * 0.25f).coerceIn(-24f, 24f)

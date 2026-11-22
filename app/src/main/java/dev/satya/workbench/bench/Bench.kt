@@ -209,6 +209,8 @@ class Bench(private val act: WorkbenchActivity) {
     private fun computeGeo(e: Edge): Geo {
         val m = act.windowManager.currentWindowMetrics
         val ins = m.windowInsets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        Sys.screenW = m.bounds.width()
+        Sys.screenH = m.bounds.height()
         return Geo(m.bounds.width(), m.bounds.height(), e, ins, density)
     }
 
@@ -222,16 +224,17 @@ class Bench(private val act: WorkbenchActivity) {
         act.window?.decorView?.performHapticFeedback(kind)
     }
 
-    /** Same layout as full screen: shrink the density by exactly the window's scale. */
-    private fun densityFor(bounds: Rect): Int {
-        val dpi = act.resources.displayMetrics.densityDpi
-        return (dpi * bounds.width() / geo.w.toFloat()).roundToInt().coerceAtLeast(96)
-    }
-
-    /** [densityFor] with the app's own zoom applied: a higher dpi draws the same layout bigger. */
+    /**
+     * Density for a floating task. Windows are scaled pictures of the full-screen app, so normally the app keeps
+     * its own density (0: no override, no restart). Only the per-app zoom overrides it: a higher dpi draws the
+     * same app bigger (that one change restarts the app, like any density change).
+     */
+    @Suppress("UNUSED_PARAMETER")
     private fun dpiOf(id: Int, bounds: Rect): Int {
         val pkg = when (id) { mainTask -> mainPkg; splitTask -> splitPkg; else -> pkgOfTask(id) }
-        return (densityFor(bounds) * Prefs.zoom(pkg)).roundToInt().coerceAtLeast(96)
+        val z = Prefs.zoom(pkg)
+        if (z == 1f) return 0
+        return (act.resources.displayMetrics.densityDpi * z).roundToInt().coerceAtLeast(96)
     }
 
     private fun icon(pkg: String?): ImageBitmap? = pkg?.let { Apps.cachedIcon(it) ?: Apps.icon(act, it) }
@@ -473,6 +476,9 @@ class Bench(private val act: WorkbenchActivity) {
         active = this
         activeFlow.value = true
         Sys.register(listener)
+        // Apps launched into the bench land scaled into the main window before Workbench pins their frame.
+        val defaultFrame = Rect(geo.main)
+        scope.launch(Dispatchers.IO) { Sys.setDefaultFrame(defaultFrame) }
         scope.launch(Dispatchers.IO) { Apps.refresh(act) }
         // Clipboard history fallback, in case a copy happened while the listener couldn't read it.
         scope.launch(Dispatchers.IO) {
@@ -597,7 +603,6 @@ class Bench(private val act: WorkbenchActivity) {
         splitRatio = 0.5f
         val m = mainTask ?: return
         val b = Rect(geo.main)
-        val dpi = densityFor(b)
         scope.launch(Dispatchers.IO) { Sys.prepareFreeform(m, b, dpiOf(m, b)) }
         scheduleReload(0)
     }
@@ -670,7 +675,6 @@ class Bench(private val act: WorkbenchActivity) {
             session += id
             persistSession()
             val r = splitRects().second
-            val dpi = densityFor(r)
             scope.launch(Dispatchers.IO) { Sys.prepareFreeform(id, r, dpiOf(id, r)) }
             scheduleReload()
             return
@@ -717,9 +721,8 @@ class Bench(private val act: WorkbenchActivity) {
         if (actionsFor != null || handleMenu) {
             actionsFor = null
             handleMenu = false
-            return
         }
-        exitHome()
+        // Anything else: nothing. Workbench stays open until the home gesture, back, or the edge handle.
     }
 
     fun onCardTap(e: StripEntry) {
@@ -993,10 +996,11 @@ class Bench(private val act: WorkbenchActivity) {
         exiting = true
         val s = session.toList()
         session.clear()
-        withContext(Dispatchers.IO) {
-            Sys.restore(s, top = target)
-            Sys.showTask(act, target, null)
-        }
+        withContext(Dispatchers.IO) { Sys.restore(s, top = target) }
+        // The app is full screen again under our cover (same configuration, so no restart): give it a moment to
+        // lay out with the status bar before it comes up, so the last frame of the flyer hands over cleanly.
+        delay(160)
+        withContext(Dispatchers.IO) { Sys.showTask(act, target, null) }
         thread { Prefs.session = emptySet() }
         finishQuietly()
     }
@@ -1024,7 +1028,7 @@ class Bench(private val act: WorkbenchActivity) {
         }
     }
 
-    /** Tap on empty space: everything goes back to normal, home screen. */
+    /** Everything goes back to normal, home screen (edge handle / tile with no app in the main window). */
     fun exitHome() = op {
         handleMenu = false
         actionsFor = null
@@ -1451,13 +1455,14 @@ class Bench(private val act: WorkbenchActivity) {
         edge = e
         geo = computeGeo(e)
         cardRects.clear()
+        val defaultFrame = Rect(geo.main)
+        scope.launch(Dispatchers.IO) { Sys.setDefaultFrame(defaultFrame) }
         val m = mainTask
         if (m != null) {
             val f = Flyer(img, icon(mainPkg), oldMain, Rect(geo.main), mainRadius, mainRadius)
             mainImage = null
             flyers += f
             val bounds = Rect(geo.main)
-            val dpi = densityFor(bounds)
             // Windows parked behind the main one move too, or they would peek out around the new main window.
             val parked = session.filter { it != m }
             coroutineScope {

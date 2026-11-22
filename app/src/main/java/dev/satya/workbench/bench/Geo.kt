@@ -8,8 +8,9 @@ import kotlin.math.roundToInt
 /**
  * All layout in window pixels. The Compose strip is laid out with the same numbers so slots line up exactly.
  *
- * The main window is the screen scaled down (same aspect ratio). The floating task gets a density scaled by
- * the same factor, so apps lay out exactly as they do full screen and every open / close is a pure scale.
+ * The main window is the screen scaled down (same aspect ratio). The floating task keeps screen-sized bounds and
+ * the normal density, and the system hook scales its surface into this frame (see Sys.virtualBounds), so apps
+ * lay out exactly as they do full screen, are never restarted, and every open / close is a pure scale.
  * Cards are the screen scaled further down, turned about their vertical axis (left edge stays, right edge recedes).
  */
 class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d: Float) {
@@ -27,6 +28,8 @@ class Geo(val w: Int, val h: Int, val edge: Edge, insets: Insets, private val d:
     val toolsLen = if (edge.vertical) dp(118) else dp(58)
 
     val full = Rect(0, 0, w, h)
+    /** Status bar height: floating apps keep this band at their top (scaled with the window). */
+    val statusH = insets.top
     /** Main window size relative to the screen. */
     val scale: Float
     val strip: Rect

@@ -34,7 +34,12 @@ import kotlinx.coroutines.launch
 class EdgeService : AccessibilityService() {
     companion object {
         @Volatile var running = false
+        /** The connected service, for overlays only it may add (the main window's handle). */
+        @Volatile var instance: EdgeService? = null
     }
+
+    /** The main window's handle overlay; created on first use. */
+    val mainPill: MainPill by lazy { MainPill(this, wm) }
     private lateinit var wm: WindowManager
     private var handle: HandleView? = null
     private val scope = MainScope()
@@ -60,6 +65,7 @@ class EdgeService : AccessibilityService() {
     override fun onServiceConnected() {
         running = true
         wm = getSystemService(WindowManager::class.java)
+        instance = this
         handle = HandleView(this) { Trigger.enter(this) }
         locked = getSystemService(KeyguardManager::class.java).isKeyguardLocked
         registerReceiver(screenReceiver, IntentFilter().apply {
@@ -71,7 +77,7 @@ class EdgeService : AccessibilityService() {
         clipboard = getSystemService(android.content.ClipboardManager::class.java).also { it.addPrimaryClipChangedListener(clipListener) }
         takeClip()
         scope.launch {
-            combine(Prefs.handleEnabled, Prefs.handleSide, Prefs.handleY, Bench.activeFlow, Prefs.handleTransparency) { _, _, _, _, _ -> }.collect { update() }
+            combine(listOf<kotlinx.coroutines.flow.Flow<Any>>(Prefs.handleEnabled, Prefs.handleSide, Prefs.handleY, Bench.activeFlow, Prefs.handleTransparency, Prefs.handleAutoHide)) { }.collect { update() }
         }
     }
 
@@ -95,10 +101,14 @@ class EdgeService : AccessibilityService() {
 
     private fun update() {
         val v = handle ?: return
+        if (!Bench.activeFlow.value) runCatching { mainPill.show(null) }
         val show = Prefs.handleEnabled.value && !Bench.activeFlow.value && !imeVisible && !locked
         v.side = Prefs.handleSide.value
         v.opacity = 1f - Prefs.handleTransparency.value
+        v.autoHide = Prefs.handleAutoHide.value
         if (show) {
+            // Coming back (Workbench closed, keyboard down, unlocked): show the pill, then let it slide away again.
+            if (!attached || v.visibility != View.VISIBLE) v.wake()
             val p = params()
             if (!attached) {
                 runCatching { wm.addView(v, p) }.onSuccess { attached = true }
@@ -125,6 +135,8 @@ class EdgeService : AccessibilityService() {
 
     override fun onDestroy() {
         running = false
+        instance = null
+        runCatching { mainPill.remove() }
         scope.cancel()
         runCatching { unregisterReceiver(screenReceiver) }
         clipboard?.removePrimaryClipChangedListener(clipListener)
@@ -140,6 +152,50 @@ private class HandleView(ctx: Context, val onTrigger: () -> Unit) : View(ctx) {
     /** User setting; while being swiped the pill fades in to full strength regardless. */
     var opacity: Float = 1f
         set(v) { field = v; invalidate() }
+    /** Slide the pill off the edge after [HIDE_AFTER] ms without a touch. The view (and its swipe area) stays. */
+    var autoHide: Boolean = false
+        set(v) {
+            if (field == v) return
+            field = v
+            if (v) scheduleHide() else { removeCallbacks(hideRunnable); animateShown(1f, 200) }
+        }
+    /** 1 = pill in place, 0 = slid off the edge. */
+    private var shown = 1f
+    private var shownAnim: ValueAnimator? = null
+    private val hideRunnable = Runnable { animateShown(0f, 420) }
+
+    private fun animateShown(to: Float, ms: Long) {
+        shownAnim?.cancel()
+        if (shown == to) return
+        shownAnim = ValueAnimator.ofFloat(shown, to).apply {
+            duration = ms
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { shown = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
+
+    private fun scheduleHide() {
+        removeCallbacks(hideRunnable)
+        if (autoHide) postDelayed(hideRunnable, HIDE_AFTER)
+    }
+
+    /** Show the pill now; with auto-hide on, it slides away again after a while. */
+    fun wake() {
+        removeCallbacks(hideRunnable)
+        animateShown(1f, 200)
+        scheduleHide()
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(hideRunnable)
+        shownAnim?.cancel()
+        super.onDetachedFromWindow()
+    }
+
+    companion object {
+        const val HIDE_AFTER = 3000L
+    }
     private val d = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCCFFFFFF.toInt() }
     private val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x40000000 }
@@ -158,12 +214,15 @@ private class HandleView(ctx: Context, val onTrigger: () -> Unit) : View(ctx) {
     override fun onDraw(c: Canvas) {
         val w = (4 + 6 * progress) * d
         val h = (64 - 14 * progress) * d
-        val inset = (3 + 10 * progress) * d
+        // Hidden: the pill slides out past the screen edge. A swipe pulls it back in as it goes.
+        val vis = maxOf(shown, progress)
+        if (vis <= 0f) return
+        val inset = (3 + 10 * progress) * d - (1f - vis) * (w + 4 * d)
         val cy = height / 2f
         val left = if (side == Edge.LEFT) inset else width - inset - w
         rect.set(left, cy - h / 2, left + w, cy + h / 2)
         val sh = RectF(rect).apply { inset(-1 * d, -1 * d) }
-        val k = opacity + (1f - opacity) * progress
+        val k = (opacity + (1f - opacity) * progress) * vis
         shadow.alpha = (0x40 * k).toInt()
         c.drawRoundRect(sh, w, w, shadow)
         paint.alpha = ((150 + 105 * progress) * k).toInt()
@@ -177,6 +236,8 @@ private class HandleView(ctx: Context, val onTrigger: () -> Unit) : View(ctx) {
                 anim?.cancel()
                 x0 = e.rawX
                 fired = false
+                removeCallbacks(hideRunnable)
+                if (autoHide) animateShown(1f, 160)
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = (e.rawX - x0) * (if (side == Edge.LEFT) 1 else -1)
@@ -189,6 +250,7 @@ private class HandleView(ctx: Context, val onTrigger: () -> Unit) : View(ctx) {
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                scheduleHide()
                 anim = ValueAnimator.ofFloat(progress, 0f).apply {
                     duration = 220
                     interpolator = DecelerateInterpolator()

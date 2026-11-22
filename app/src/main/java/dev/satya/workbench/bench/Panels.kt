@@ -219,7 +219,7 @@ fun SearchPanel(b: Bench) {
     // Results change under the grid; keep it at the top so the best match is always visible.
     LaunchedEffect(q) { grid.requestScrollToItem(0) }
     BackHandler { b.closeModal() }
-    // No auto-focus: the keyboard opens only when the search field is tapped.
+    // The keyboard opens when the search field is tapped, or right away with "Keyboard in search" on.
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val top by androidx.compose.runtime.produceState(emptyList<AppEntry>(), apps) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Apps.topUsed(ctx, 10) }
@@ -230,7 +230,7 @@ fun SearchPanel(b: Bench) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.popIn(0, rise = 28.dp, from = 0.94f).padding(top = 10.dp, bottom = 10.dp)) {
             dev.satya.workbench.ui.CouiSearchBar("Search apps", { q = it }, {
                 results.firstOrNull()?.let { b.pickApp(it, null) }
-            }, Modifier.weight(1f).height(56.dp), onEditing = { editing = it })
+            }, Modifier.weight(1f).height(56.dp), onEditing = { editing = it }, autoOpen = Prefs.searchKeyboard.value)
             // While typing, the bar's own Cancel takes this spot; the close button folds away.
             androidx.compose.animation.AnimatedVisibility(
                 !editing,

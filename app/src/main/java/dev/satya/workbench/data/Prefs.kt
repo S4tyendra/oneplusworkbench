@@ -20,6 +20,10 @@ object Prefs {
     val handleSide = MutableStateFlow(Edge.RIGHT)
     val handleY = MutableStateFlow(0.32f)
     val handleEnabled = MutableStateFlow(true)
+    /** Edge handle slides away after a few idle seconds; the same spot still takes the swipe. */
+    val handleAutoHide = MutableStateFlow(false)
+    /** Search opens with the keyboard up, ready to type. */
+    val searchKeyboard = MutableStateFlow(false)
     val compact = MutableStateFlow(true)
     /** Workbench background: 0 = solid dark, 1 = wallpaper fully visible (no blur, no tint). */
     val transparency = MutableStateFlow(0.5f)
@@ -39,6 +43,8 @@ object Prefs {
         handleSide.value = if (sp.getString("handleSide", "RIGHT") == "LEFT") Edge.LEFT else Edge.RIGHT
         handleY.value = sp.getFloat("handleY", 0.32f)
         handleEnabled.value = sp.getBoolean("handleEnabled", true)
+        handleAutoHide.value = sp.getBoolean("handleAutoHide", false)
+        searchKeyboard.value = sp.getBoolean("searchKeyboard", false)
         compact.value = sp.getBoolean("compact", true)
         transparency.value = sp.getFloat("transparency", 0.5f)
         handleTransparency.value = sp.getFloat("handleTransparency", 0f)
@@ -73,6 +79,8 @@ object Prefs {
     fun setHandleSide(e: Edge) { handleSide.value = e; sp.edit().putString("handleSide", e.name).apply() }
     fun setHandleY(y: Float) { handleY.value = y; sp.edit().putFloat("handleY", y).apply() }
     fun setHandleEnabled(b: Boolean) { handleEnabled.value = b; sp.edit().putBoolean("handleEnabled", b).apply() }
+    fun setHandleAutoHide(b: Boolean) { handleAutoHide.value = b; sp.edit().putBoolean("handleAutoHide", b).apply() }
+    fun setSearchKeyboard(b: Boolean) { searchKeyboard.value = b; sp.edit().putBoolean("searchKeyboard", b).apply() }
     fun setTransparency(v: Float) { transparency.value = v.coerceIn(0f, 1f); sp.edit().putFloat("transparency", transparency.value).apply() }
     fun setHandleTransparency(v: Float) { handleTransparency.value = v.coerceIn(0f, 1f); sp.edit().putFloat("handleTransparency", handleTransparency.value).apply() }
     fun setCompact(b: Boolean) { compact.value = b; sp.edit().putBoolean("compact", b).apply() }

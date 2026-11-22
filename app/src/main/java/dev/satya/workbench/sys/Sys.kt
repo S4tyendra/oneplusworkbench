@@ -16,6 +16,7 @@ import android.window.WindowContainerToken
 import android.window.WindowContainerTransaction
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import kotlin.math.roundToInt
 
 /** Thin wrapper over the hidden task / window-organizer APIs. All calls are binder calls: keep them off the UI thread when possible. */
 object Sys {
@@ -108,7 +109,7 @@ object Sys {
     fun freeformOptions(ctx: Context?, bounds: Rect?, noAnim: Boolean): ActivityOptions {
         val o = if (noAnim && ctx != null) ActivityOptions.makeCustomAnimation(ctx, 0, 0) else ActivityOptions.makeBasic()
         if (bounds != null) {
-            o.setLaunchBounds(Rect(bounds))
+            o.setLaunchBounds(virtualBounds(bounds))
             runCatching { mSetWindowingMode?.invoke(o, WM_FREEFORM) }
         }
         return o
@@ -117,17 +118,50 @@ object Sys {
     fun launchBehindOptions(bounds: Rect): ActivityOptions {
         val o = runCatching { ActivityOptions::class.java.getMethod("makeTaskLaunchBehind").invoke(null) as ActivityOptions }
             .getOrElse { ActivityOptions.makeBasic() }
-        o.setLaunchBounds(Rect(bounds))
+        o.setLaunchBounds(virtualBounds(bounds))
         runCatching { mSetWindowingMode?.invoke(o, WM_FREEFORM) }
         return o
     }
 
-    /** Switch an existing task to a floating window with the given bounds, without changing z-order. */
-    fun prepareFreeform(taskId: Int, bounds: Rect, densityDpi: Int): Boolean {
+    // ------------------------------------------------------------------ scaled windows
+    //
+    // A floating app keeps the configuration it has full screen: its task stays screen-sized (one px short, so
+    // the system doesn't treat it as covering Workbench) at the normal density, and the system hook scales the
+    // task's surface down into the on-screen frame, like ColorOS's own zoom windows. Nothing about the app's
+    // configuration changes on the way in or out, so apps are never restarted.
+
+    /** Must match SystemHook.FRAME_MAGIC: a resizeTask call with this mode only tells the hook a task's frame. */
+    private const val FRAME_MAGIC = 0x57420001
+    private const val FRAME_DEFAULT = -1
+    private const val FRAME_CLEAR_ALL = -2
+
+    @Volatile var screenW = 0
+    @Volatile var screenH = 0
+
+    /** The screen-sized task bounds whose scaled picture fills [frame]. Same width as the screen, height to match. */
+    fun virtualBounds(frame: Rect): Rect {
+        if (screenW <= 0 || frame.isEmpty) return Rect(frame)
+        val s = frame.width() / screenW.toFloat()
+        var vh = (frame.height() / s).roundToInt()
+        if (kotlin.math.abs(vh - screenH) <= 3 || vh >= screenH) vh = screenH - 1
+        return Rect(0, 0, screenW, vh)
+    }
+
+    private fun sendFrame(taskId: Int, frame: Rect?) {
+        runCatching { atm.resizeTask(taskId, frame?.let { Rect(it) } ?: Rect(), FRAME_MAGIC) }
+            .onFailure { Log.w(TAG, "frame $taskId", it) }
+    }
+
+    /** Where floating tasks without a frame of their own (fresh launches) are drawn; null clears it. */
+    fun setDefaultFrame(frame: Rect?) = sendFrame(FRAME_DEFAULT, frame)
+
+    /** Switch an existing task to a floating window drawn at [frame], without changing z-order. [densityDpi] 0 = the app's normal density. */
+    fun prepareFreeform(taskId: Int, frame: Rect, densityDpi: Int): Boolean {
         val tok = tokenOf(taskId) ?: return false
+        sendFrame(taskId, frame)
         return transact {
             it.setWindowingMode(tok, WM_FREEFORM)
-            it.setBounds(tok, Rect(bounds))
+            it.setBounds(tok, virtualBounds(frame))
             it.setDensityDpi(tok, densityDpi)
         }
     }
@@ -152,9 +186,9 @@ object Sys {
 
     fun remove(taskId: Int): Boolean = runCatching { atm.removeTask(taskId) }.getOrDefault(false)
 
-    /** Put tasks back to normal fullscreen (inherit display), clear bounds and density overrides. */
+    /** Put tasks back to normal fullscreen (inherit display), clear bounds, density overrides and every frame. */
     fun restore(ids: Collection<Int>, top: Int? = null) {
-        if (ids.isEmpty() && top == null) return
+        if (ids.isEmpty() && top == null) { sendFrame(FRAME_CLEAR_ALL, null); return }
         val running = runningTasks().associateBy { it.taskId }
         transact { wct ->
             for (id in ids + listOfNotNull(top)) {
@@ -167,6 +201,8 @@ object Sys {
                 }
             }
         }
+        // After the switch: a task that left freeform is no longer scaled by the hook anyway.
+        sendFrame(FRAME_CLEAR_ALL, null)
     }
 
     fun register(l: TaskStackListener) {
