@@ -666,9 +666,14 @@ public class SystemHook implements IXposedHookLoadPackage {
                         Object task = XposedHelpers.callMethod(p.args[0], "getTask");
                         if (task == null) return;
                         Object root = XposedHelpers.callMethod(task, "getRootTask");
-                        if (root == null || frameOf(root, taskIdOf(root)) == null) return;
+                        Rect f = root == null ? null : frameOf(root, taskIdOf(root));
+                        if (f == null) return;
                         Object in = p.args[1], out = p.getResult();
-                        if (in == out) return;
+                        if (in == out) {
+                            out = XposedHelpers.newInstance(in.getClass(), in, true);
+                            p.setResult(out);
+                        }
+                        mapIme(out, f, scaleOf(root, f));
                         int bars = android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars()
                                 | android.view.WindowInsets.Type.systemGestures() | android.view.WindowInsets.Type.mandatorySystemGestures()
                                 | android.view.WindowInsets.Type.tappableElement();
@@ -688,6 +693,33 @@ public class SystemHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(t);
         }
+    }
+
+    /**
+     * The IME frame is in screen pixels, but a scaled app lays out at full-screen size. Move the IME into the app's
+     * own coordinates (where the keyboard's top edge falls inside the scaled window), or the app reserves too little
+     * room and its input field ends up under the keyboard.
+     */
+    private static void mapIme(Object state, Rect f, float s) {
+        if (s <= 0f || s == 1f) return;
+        int ime = android.view.WindowInsets.Type.ime();
+        int n = (Integer) XposedHelpers.callMethod(state, "sourceSize");
+        for (int i = 0; i < n; i++) {
+            Object src = XposedHelpers.callMethod(state, "sourceAt", i);
+            if ((Integer) XposedHelpers.callMethod(src, "getType") != ime) continue;
+            Object copy = XposedHelpers.newInstance(src.getClass(), src);
+            XposedHelpers.callMethod(copy, "setFrame", toVirtual((Rect) XposedHelpers.callMethod(src, "getFrame"), f, s));
+            Rect vis = (Rect) XposedHelpers.callMethod(src, "getVisibleFrame");
+            if (vis != null) XposedHelpers.callMethod(copy, "setVisibleFrame", toVirtual(vis, f, s));
+            XposedHelpers.callMethod(state, "addSource", copy);
+            return;
+        }
+    }
+
+    private static Rect toVirtual(Rect r, Rect f, float s) {
+        if (r == null || r.isEmpty()) return r;
+        return new Rect(Math.round((r.left - f.left) / s), Math.round((r.top - f.top) / s),
+                Math.round((r.right - f.left) / s), Math.round((r.bottom - f.top) / s));
     }
 
     // ------------------------------------------------------------------ scaled windows (shell)
